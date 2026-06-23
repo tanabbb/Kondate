@@ -51,7 +51,7 @@ const WEEK_DAYS = ["日","月","火","水","木","金","土"];
 const COLOR_PALETTE = [
   { id:"yellow",  label:"黄色",  bg:"#FFF9C4", border:"#F9E04B", shadow:"#c8a800" },
   { id:"green",   label:"緑",    bg:"#C8F7C5", border:"#58D68D", shadow:"#1a9150" },
-  { id:"pink",    label:"ピンク",bg:"#FFDCE0", border:"#F1948A", shadow:"#c0392b" },
+  { id:"pink",    label:"ピンク",bg:"#F0D9F7", border:"#C39BD3", shadow:"#8e44ad" },
   { id:"blue",    label:"水色",  bg:"#D6EAF8", border:"#7FB3D3", shadow:"#1a6fa8" },
   { id:"purple",  label:"紫",    bg:"#E8D5F5", border:"#C39BD3", shadow:"#7d3c98" },
   { id:"orange",  label:"橙",    bg:"#FAE5D3", border:"#F0A86F", shadow:"#ca6f1e" },
@@ -518,7 +518,17 @@ function App() {
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxWidth:500,maxHeight:"75vh",overflowY:"auto"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:12,color:"#3D6B4F"}}>追加するレシピを選ぶ</h3>
             <input value={pickerSearch} onChange={e=>setPickerSearch(e.target.value)} placeholder="レシピ名で絞り込み"
-              style={{width:"100%",padding:"9px 12px",border:"1.5px solid #D5CBBF",borderRadius:20,fontSize:13,marginBottom:12,background:"#FDFAF7"}} />
+              style={{width:"100%",padding:"9px 12px",border:"1.5px solid #D5CBBF",borderRadius:20,fontSize:13,marginBottom:10,background:"#FDFAF7"}} />
+            <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+              {[["default","登録順"],["name","あいうえお順"],["color","色順"]].map(([val,label])=>(
+                <button key={val} onClick={()=>setRecipeSort(val)} style={{
+                  fontSize:11,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontWeight:recipeSort===val?700:400,
+                  background:recipeSort===val?"#3D6B4F":"#fff",
+                  color:recipeSort===val?"#fff":"#888",
+                  border:recipeSort===val?"none":"1.5px solid #D5CBBF",
+                }}>{label}</button>
+              ))}
+            </div>
             {filteredRecipes.length===0 ? (
               <div style={{textAlign:"center",padding:"30px 0",color:"#BBB",fontSize:13}}>
                 {recipes.length===0?"先にレシピを登録してください":"該当するレシピがありません"}
