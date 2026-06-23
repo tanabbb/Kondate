@@ -33,9 +33,8 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script type="text/babel">
 
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useCallback } = React;
 
-// Firebase設定
 const firebaseConfig = {
   apiKey: "AIzaSyAI7suoyB3jh6Vta6rqb6p8eteaw5ZY3BU",
   authDomain: "kondatekyouyu.firebaseapp.com",
@@ -45,12 +44,10 @@ const firebaseConfig = {
   appId: "1:25707191862:web:331ec76793e4b3207d4297"
 };
 
-// Firebase初期化
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 const WEEK_DAYS = ["日","月","火","水","木","金","土"];
-
 const COLOR_PALETTE = [
   { id:"yellow",  label:"黄色",  bg:"#FFF9C4", border:"#F9E04B", shadow:"#c8a800" },
   { id:"green",   label:"緑",    bg:"#C8F7C5", border:"#58D68D", shadow:"#1a9150" },
@@ -61,6 +58,7 @@ const COLOR_PALETTE = [
   { id:"red",     label:"赤",    bg:"#FADBD8", border:"#E74C3C", shadow:"#c0392b" },
   { id:"teal",    label:"青緑",  bg:"#D1F2EB", border:"#1ABC9C", shadow:"#148f77" },
 ];
+const COLOR_ORDER = COLOR_PALETTE.map(c=>c.id);
 function getColorById(id) { return COLOR_PALETTE.find(c=>c.id===id) || COLOR_PALETTE[0]; }
 
 function getCurrentYearMonth() {
@@ -82,8 +80,10 @@ function App() {
   const [recipes, setRecipes] = useState([]);
   const [plan, setPlan] = useState({});
   const [checked, setChecked] = useState({});
+  const [shopOrder, setShopOrder] = useState([]); // 買い物リストの並び順
   const [syncing, setSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState(null);
+  const [recipeSort, setRecipeSort] = useState("default"); // "default"|"name"|"color"
+  const [dragItem, setDragItem] = useState(null); // 買い物リストドラッグ
 
   const init = getCurrentYearMonth();
   const [viewYear, setViewYear] = useState(init.year);
@@ -102,44 +102,27 @@ function App() {
   const [showDayModal, setShowDayModal] = useState(false);
   const [dayModalKey, setDayModalKey] = useState(null);
 
-  // Firestoreからリアルタイム同期
   useEffect(() => {
     const unsubRecipes = db.collection("data").doc("recipes")
-      .onSnapshot(doc => {
-        if (doc.exists) setRecipes(doc.data().list || []);
-      });
+      .onSnapshot(doc => { if (doc.exists) setRecipes(doc.data().list || []); });
     const unsubPlan = db.collection("data").doc("plan")
-      .onSnapshot(doc => {
-        if (doc.exists) setPlan(doc.data().map || {});
-      });
+      .onSnapshot(doc => { if (doc.exists) setPlan(doc.data().map || {}); });
     const unsubChecked = db.collection("data").doc("checked")
-      .onSnapshot(doc => {
-        if (doc.exists) setChecked(doc.data().map || {});
-      });
-    return () => { unsubRecipes(); unsubPlan(); unsubChecked(); };
+      .onSnapshot(doc => { if (doc.exists) setChecked(doc.data().map || {}); });
+    const unsubShopOrder = db.collection("data").doc("shopOrder")
+      .onSnapshot(doc => { if (doc.exists) setShopOrder(doc.data().list || []); });
+    return () => { unsubRecipes(); unsubPlan(); unsubChecked(); unsubShopOrder(); };
   }, []);
 
-  async function saveRecipes(newRecipes) {
-    setRecipes(newRecipes);
+  async function save(docName, data) {
     setSyncing(true);
-    await db.collection("data").doc("recipes").set({ list: newRecipes });
+    await db.collection("data").doc(docName).set(data);
     setSyncing(false);
-    setLastSync(new Date());
   }
-  async function savePlan(newPlan) {
-    setPlan(newPlan);
-    setSyncing(true);
-    await db.collection("data").doc("plan").set({ map: newPlan });
-    setSyncing(false);
-    setLastSync(new Date());
-  }
-  async function saveChecked(newChecked) {
-    setChecked(newChecked);
-    setSyncing(true);
-    await db.collection("data").doc("checked").set({ map: newChecked });
-    setSyncing(false);
-    setLastSync(new Date());
-  }
+  async function saveRecipes(r) { setRecipes(r); await save("recipes", {list:r}); }
+  async function savePlan(p) { setPlan(p); await save("plan", {map:p}); }
+  async function saveChecked(c) { setChecked(c); await save("checked", {map:c}); }
+  async function saveShopOrder(o) { setShopOrder(o); await save("shopOrder", {list:o}); }
 
   function openAddRecipe() {
     setEditingRecipe(null); setRecipeName(""); setRecipeIngredients(""); setRecipeMemo(""); setRecipeColor("yellow");
@@ -175,13 +158,11 @@ function App() {
   function openPickerFromDay() { setSelectedKey(dayModalKey); setPickerSearch(""); setShowPicker(true); }
   async function assignRecipe(recipe) {
     const cur = plan[selectedKey] || [];
-    const newPlan = {...plan, [selectedKey]: [...cur, recipe]};
-    await savePlan(newPlan);
+    await savePlan({...plan, [selectedKey]: [...cur, recipe]});
     setShowPicker(false);
   }
   async function removeFromDay(key, recipeId) {
-    const cur = (plan[key]||[]).filter(r => r.id!==recipeId);
-    await savePlan({...plan, [key]: cur});
+    await savePlan({...plan, [key]: (plan[key]||[]).filter(r => r.id!==recipeId)});
   }
 
   function prevMonth() {
@@ -202,6 +183,7 @@ function App() {
   }
   if (week.length>0) { while(week.length<7) week.push(null); weeks.push(week); }
 
+  // 買い物リスト集計
   const shoppingMap = {};
   for (let d=1; d<=totalDays; d++) {
     const k = dateKey(viewYear, viewMonth, d);
@@ -212,8 +194,21 @@ function App() {
       });
     });
   }
-  const shoppingList = Object.entries(shoppingMap).map(([ing, uses]) => ({ ing, uses }));
-  const filteredRecipes = recipes.filter(r => r.name.includes(pickerSearch));
+  const allIngredients = Object.keys(shoppingMap);
+
+  // shopOrderに基づいて並べる（新しい食材は末尾に追加）
+  const orderedIngredients = [
+    ...shopOrder.filter(ing => allIngredients.includes(ing)),
+    ...allIngredients.filter(ing => !shopOrder.includes(ing)),
+  ];
+
+  // レシピ並べ替え
+  const sortedRecipes = [...recipes].sort((a,b) => {
+    if (recipeSort==="name") return a.name.localeCompare(b.name, "ja");
+    if (recipeSort==="color") return COLOR_ORDER.indexOf(a.colorId) - COLOR_ORDER.indexOf(b.colorId);
+    return 0;
+  });
+  const filteredRecipes = sortedRecipes.filter(r => r.name.includes(pickerSearch));
 
   function dayModalLabel() {
     if (!dayModalKey) return "";
@@ -222,11 +217,36 @@ function App() {
     return `${Number(m)}月${Number(d)}日（${dow}）`;
   }
 
-  async function toggleCheck(ing) {
-    const newChecked = {...checked, [ing]: !checked[ing]};
-    await saveChecked(newChecked);
-  }
+  async function toggleCheck(ing) { await saveChecked({...checked, [ing]: !checked[ing]}); }
   async function clearChecks() { await saveChecked({}); }
+
+  // ドラッグ＆ドロップで並べ替え（タッチ対応）
+  const [dragOver, setDragOver] = useState(null);
+  const [touchStartY, setTouchStartY] = useState(null);
+  const [touchDragIdx, setTouchDragIdx] = useState(null);
+
+  function onDragStart(ing) { setDragItem(ing); }
+  function onDragOver(e, ing) { e.preventDefault(); setDragOver(ing); }
+  async function onDrop(ing) {
+    if (!dragItem || dragItem===ing) { setDragItem(null); setDragOver(null); return; }
+    const newOrder = [...orderedIngredients];
+    const fromIdx = newOrder.indexOf(dragItem);
+    const toIdx = newOrder.indexOf(ing);
+    newOrder.splice(fromIdx, 1);
+    newOrder.splice(toIdx, 0, dragItem);
+    await saveShopOrder(newOrder);
+    setDragItem(null); setDragOver(null);
+  }
+
+  // タッチで上下移動
+  async function moveItem(ing, dir) {
+    const newOrder = [...orderedIngredients];
+    const idx = newOrder.indexOf(ing);
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= newOrder.length) return;
+    [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
+    await saveShopOrder(newOrder);
+  }
 
   const tabStyle = (key) => ({
     flex:1, padding:"12px 0", fontSize:13, fontWeight:tab===key?700:400,
@@ -243,7 +263,7 @@ function App() {
             <div style={{fontSize:21,fontWeight:800,color:"#fff",letterSpacing:2}}>🍱 こんだて帳</div>
             <div style={{fontSize:11,color:"#A8D5B5",marginTop:2}}>夕食の献立を1ヶ月まるごと管理</div>
           </div>
-          <div style={{fontSize:10,color:syncing?"#FFD700":"#A8D5B5",textAlign:"right"}}>
+          <div style={{fontSize:10,color:syncing?"#FFD700":"#A8D5B5"}}>
             {syncing ? "⟳ 同期中..." : "☁️ 同期済み"}
           </div>
         </div>
@@ -287,16 +307,9 @@ function App() {
                         const isSun=di===0, isSat=di===6;
                         return (
                           <td key={di} onClick={()=>openDayModal(key)} style={{verticalAlign:"top",cursor:"pointer"}}>
-                            <div style={{
-                              minHeight:68, borderRadius:8, padding:"3px 4px",
-                              background:today?"#EAF4EE":"#fff",
-                              border:today?"2px solid #3D6B4F":"1.5px solid #E8E2DA",
-                              boxShadow:"0 1px 2px rgba(0,0,0,0.04)",
-                            }}>
+                            <div style={{minHeight:68,borderRadius:8,padding:"3px 4px",background:today?"#EAF4EE":"#fff",border:today?"2px solid #3D6B4F":"1.5px solid #E8E2DA",boxShadow:"0 1px 2px rgba(0,0,0,0.04)"}}>
                               <div style={{fontSize:10,fontWeight:today?800:600,marginBottom:2,color:isSun?"#c0392b":isSat?"#2980b9":today?"#3D6B4F":"#555"}}>{day}</div>
-                              {dayRecipes.length===0 && (
-                                <div style={{fontSize:15,color:"#DDD",textAlign:"center",paddingTop:4}}>＋</div>
-                              )}
+                              {dayRecipes.length===0 && <div style={{fontSize:15,color:"#DDD",textAlign:"center",paddingTop:4}}>＋</div>}
                               {dayRecipes.map((r,i)=>{
                                 const c=getColorById(r.colorId);
                                 return (
@@ -320,19 +333,30 @@ function App() {
 
         {tab==="recipes" && (
           <div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <p style={{fontSize:12,color:"#999"}}>{recipes.length}件のレシピ</p>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <p style={{fontSize:12,color:"#999"}}>{recipes.length}件</p>
               <button onClick={openAddRecipe} style={{background:"#3D6B4F",color:"#fff",border:"none",borderRadius:20,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ レシピを追加</button>
+            </div>
+            {/* 並べ替えボタン */}
+            <div style={{display:"flex",gap:8,marginBottom:14}}>
+              <span style={{fontSize:12,color:"#aaa",alignSelf:"center"}}>並べ替え：</span>
+              {[["default","登録順"],["name","あいうえお順"],["color","色順"]].map(([val,label])=>(
+                <button key={val} onClick={()=>setRecipeSort(val)} style={{
+                  fontSize:11,padding:"5px 12px",borderRadius:20,cursor:"pointer",fontWeight:recipeSort===val?700:400,
+                  background:recipeSort===val?"#3D6B4F":"#fff",
+                  color:recipeSort===val?"#fff":"#888",
+                  border:recipeSort===val?"none":"1.5px solid #D5CBBF",
+                }}>{label}</button>
+              ))}
             </div>
             {recipes.length===0 ? (
               <div style={{textAlign:"center",padding:60,color:"#BBB"}}>
                 <div style={{fontSize:48}}>🍽️</div>
                 <div style={{marginTop:12,fontSize:14}}>まだレシピがありません</div>
-                <div style={{fontSize:12,marginTop:4}}>「＋ レシピを追加」から登録してみましょう</div>
               </div>
             ) : (
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(160px, 1fr))",gap:12}}>
-                {recipes.map(r=>{
+                {sortedRecipes.map(r=>{
                   const c=getColorById(r.colorId);
                   return (
                     <div key={r.id} style={{background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:14,boxShadow:`3px 4px 0 ${c.shadow}44`}}>
@@ -369,39 +393,54 @@ function App() {
                 )}
               </div>
             </div>
-            {shoppingList.length===0 ? (
+            {orderedIngredients.length===0 ? (
               <div style={{textAlign:"center",padding:60,color:"#BBB"}}>
                 <div style={{fontSize:48}}>🛒</div>
                 <div style={{marginTop:12,fontSize:14}}>この月の献立を組むと材料が表示されます</div>
               </div>
             ) : (
               <>
-                <p style={{fontSize:12,color:"#999",marginBottom:14}}>献立から自動集計 — {shoppingList.length}種類の食材</p>
+                <p style={{fontSize:12,color:"#999",marginBottom:8}}>{orderedIngredients.length}種類 ／ ☰ を長押しでドラッグ、↑↓で並べ替え</p>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {shoppingList.map(({ing,uses})=>{
+                  {orderedIngredients.map((ing,idx)=>{
                     const done = !!checked[ing];
+                    const uses = shoppingMap[ing] || [];
                     return (
-                      <div key={ing} onClick={()=>toggleCheck(ing)} style={{
-                        display:"flex",alignItems:"center",gap:12,
-                        background:"#fff",border:"1.5px solid #E8E2DA",borderRadius:10,
-                        padding:"12px 14px",boxShadow:"0 1px 4px rgba(0,0,0,0.06)",
-                        cursor:"pointer",opacity:done?0.5:1,
-                      }}>
-                        <div style={{
-                          width:22,height:22,borderRadius:6,flexShrink:0,
+                      <div key={ing}
+                        draggable
+                        onDragStart={()=>onDragStart(ing)}
+                        onDragOver={e=>onDragOver(e,ing)}
+                        onDrop={()=>onDrop(ing)}
+                        style={{
+                          display:"flex",alignItems:"center",gap:10,
+                          background:"#fff",border:`1.5px solid ${dragOver===ing?"#3D6B4F":"#E8E2DA"}`,
+                          borderRadius:10,padding:"10px 12px",
+                          boxShadow:"0 1px 4px rgba(0,0,0,0.06)",
+                          opacity:done?0.5:1,
+                          transition:"border-color 0.1s",
+                        }}>
+                        {/* チェックボックス */}
+                        <div onClick={()=>toggleCheck(ing)} style={{
+                          width:22,height:22,borderRadius:6,flexShrink:0,cursor:"pointer",
                           background:done?"#3D6B4F":"#fff",
                           border:`2px solid ${done?"#3D6B4F":"#D5CBBF"}`,
                           display:"flex",alignItems:"center",justifyContent:"center",
                         }}>
                           {done && <span style={{color:"#fff",fontSize:14,fontWeight:800}}>✓</span>}
                         </div>
-                        <div style={{flex:1}}>
+                        {/* 内容 */}
+                        <div style={{flex:1}} onClick={()=>toggleCheck(ing)}>
                           <div style={{fontSize:14,fontWeight:700,textDecoration:done?"line-through":"none",color:done?"#aaa":"#2D2D2D"}}>{ing}</div>
                           <div style={{fontSize:10,color:"#aaa",marginTop:2}}>
                             {uses.map((u,i)=>(
                               <span key={i} style={{display:"inline-block",background:"#F0EBE3",borderRadius:8,padding:"1px 5px",marginRight:3}}>{u}</span>
                             ))}
                           </div>
+                        </div>
+                        {/* 並べ替えボタン */}
+                        <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
+                          <button onClick={()=>moveItem(ing,-1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
+                          <button onClick={()=>moveItem(ing,1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
                         </div>
                       </div>
                     );
@@ -418,9 +457,7 @@ function App() {
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxWidth:500,maxHeight:"70vh",overflowY:"auto"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:4,color:"#3D6B4F"}}>{dayModalLabel()}の夕食</h3>
             <p style={{fontSize:12,color:"#aaa",marginBottom:14}}>×ボタンで削除</p>
-            {(plan[dayModalKey]||[]).length===0 && (
-              <div style={{textAlign:"center",padding:"20px 0",color:"#CCC",fontSize:13}}>まだ何もありません</div>
-            )}
+            {(plan[dayModalKey]||[]).length===0 && <div style={{textAlign:"center",padding:"20px 0",color:"#CCC",fontSize:13}}>まだ何もありません</div>}
             <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
               {(plan[dayModalKey]||[]).map((r,i)=>{
                 const c=getColorById(r.colorId);
