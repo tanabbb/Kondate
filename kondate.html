@@ -29,16 +29,25 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script type="text/babel">
 
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
-function loadStorage(key) {
-  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
-}
-function saveStorage(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-}
+// Firebase設定
+const firebaseConfig = {
+  apiKey: "AIzaSyAI7suoyB3jh6Vta6rqb6p8eteaw5ZY3BU",
+  authDomain: "kondatekyouyu.firebaseapp.com",
+  projectId: "kondatekyouyu",
+  storageBucket: "kondatekyouyu.firebasestorage.app",
+  messagingSenderId: "25707191862",
+  appId: "1:25707191862:web:331ec76793e4b3207d4297"
+};
+
+// Firebase初期化
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
 const WEEK_DAYS = ["日","月","火","水","木","金","土"];
 
@@ -73,6 +82,8 @@ function App() {
   const [recipes, setRecipes] = useState([]);
   const [plan, setPlan] = useState({});
   const [checked, setChecked] = useState({});
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
 
   const init = getCurrentYearMonth();
   const [viewYear, setViewYear] = useState(init.year);
@@ -88,21 +99,47 @@ function App() {
   const [selectedKey, setSelectedKey] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
-
   const [showDayModal, setShowDayModal] = useState(false);
   const [dayModalKey, setDayModalKey] = useState(null);
 
+  // Firestoreからリアルタイム同期
   useEffect(() => {
-    const r = loadStorage("kondate-recipes-v4");
-    const p = loadStorage("kondate-plan-v4");
-    const c = loadStorage("kondate-checked-v4");
-    if (r) setRecipes(r);
-    if (p) setPlan(p);
-    if (c) setChecked(c);
+    const unsubRecipes = db.collection("data").doc("recipes")
+      .onSnapshot(doc => {
+        if (doc.exists) setRecipes(doc.data().list || []);
+      });
+    const unsubPlan = db.collection("data").doc("plan")
+      .onSnapshot(doc => {
+        if (doc.exists) setPlan(doc.data().map || {});
+      });
+    const unsubChecked = db.collection("data").doc("checked")
+      .onSnapshot(doc => {
+        if (doc.exists) setChecked(doc.data().map || {});
+      });
+    return () => { unsubRecipes(); unsubPlan(); unsubChecked(); };
   }, []);
-  useEffect(() => { saveStorage("kondate-recipes-v4", recipes); }, [recipes]);
-  useEffect(() => { saveStorage("kondate-plan-v4", plan); }, [plan]);
-  useEffect(() => { saveStorage("kondate-checked-v4", checked); }, [checked]);
+
+  async function saveRecipes(newRecipes) {
+    setRecipes(newRecipes);
+    setSyncing(true);
+    await db.collection("data").doc("recipes").set({ list: newRecipes });
+    setSyncing(false);
+    setLastSync(new Date());
+  }
+  async function savePlan(newPlan) {
+    setPlan(newPlan);
+    setSyncing(true);
+    await db.collection("data").doc("plan").set({ map: newPlan });
+    setSyncing(false);
+    setLastSync(new Date());
+  }
+  async function saveChecked(newChecked) {
+    setChecked(newChecked);
+    setSyncing(true);
+    await db.collection("data").doc("checked").set({ map: newChecked });
+    setSyncing(false);
+    setLastSync(new Date());
+  }
 
   function openAddRecipe() {
     setEditingRecipe(null); setRecipeName(""); setRecipeIngredients(""); setRecipeMemo(""); setRecipeColor("yellow");
@@ -113,40 +150,38 @@ function App() {
     setRecipeIngredients(r.ingredients.join("、")); setRecipeMemo(r.memo||""); setRecipeColor(r.colorId||"yellow");
     setShowRecipeModal(true);
   }
-  function saveRecipe() {
+  async function saveRecipe() {
     if (!recipeName.trim()) return;
     const ingredients = recipeIngredients.split(/[、,，\n]/).map(s=>s.trim()).filter(Boolean);
+    let newRecipes;
     if (editingRecipe) {
-      setRecipes(prev => prev.map(r => r.id===editingRecipe.id ? {...r, name:recipeName.trim(), ingredients, memo:recipeMemo, colorId:recipeColor} : r));
+      newRecipes = recipes.map(r => r.id===editingRecipe.id ? {...r, name:recipeName.trim(), ingredients, memo:recipeMemo, colorId:recipeColor} : r);
     } else {
-      setRecipes(prev => [...prev, { id:Date.now(), name:recipeName.trim(), ingredients, memo:recipeMemo, colorId:recipeColor }]);
+      newRecipes = [...recipes, { id:Date.now(), name:recipeName.trim(), ingredients, memo:recipeMemo, colorId:recipeColor }];
     }
+    await saveRecipes(newRecipes);
     setShowRecipeModal(false);
   }
-  function deleteRecipe(id) {
+  async function deleteRecipe(id) {
     if (!window.confirm("このレシピを削除しますか？")) return;
-    setRecipes(prev => prev.filter(r => r.id!==id));
-    setPlan(prev => {
-      const next = {...prev};
-      Object.keys(next).forEach(k => { next[k] = (next[k]||[]).filter(r => r.id!==id); });
-      return next;
-    });
+    const newRecipes = recipes.filter(r => r.id!==id);
+    const newPlan = {...plan};
+    Object.keys(newPlan).forEach(k => { newPlan[k] = (newPlan[k]||[]).filter(r => r.id!==id); });
+    await saveRecipes(newRecipes);
+    await savePlan(newPlan);
   }
 
   function openDayModal(key) { setDayModalKey(key); setShowDayModal(true); }
   function openPickerFromDay() { setSelectedKey(dayModalKey); setPickerSearch(""); setShowPicker(true); }
-  function assignRecipe(recipe) {
-    setPlan(prev => {
-      const cur = prev[selectedKey] || [];
-      return {...prev, [selectedKey]: [...cur, recipe]};
-    });
+  async function assignRecipe(recipe) {
+    const cur = plan[selectedKey] || [];
+    const newPlan = {...plan, [selectedKey]: [...cur, recipe]};
+    await savePlan(newPlan);
     setShowPicker(false);
   }
-  function removeFromDay(key, recipeId) {
-    setPlan(prev => {
-      const cur = (prev[key]||[]).filter(r => r.id!==recipeId);
-      return {...prev, [key]: cur};
-    });
+  async function removeFromDay(key, recipeId) {
+    const cur = (plan[key]||[]).filter(r => r.id!==recipeId);
+    await savePlan({...plan, [key]: cur});
   }
 
   function prevMonth() {
@@ -187,8 +222,11 @@ function App() {
     return `${Number(m)}月${Number(d)}日（${dow}）`;
   }
 
-  function toggleCheck(ing) { setChecked(prev => ({...prev, [ing]: !prev[ing]})); }
-  function clearChecks() { setChecked({}); }
+  async function toggleCheck(ing) {
+    const newChecked = {...checked, [ing]: !checked[ing]};
+    await saveChecked(newChecked);
+  }
+  async function clearChecks() { await saveChecked({}); }
 
   const tabStyle = (key) => ({
     flex:1, padding:"12px 0", fontSize:13, fontWeight:tab===key?700:400,
@@ -200,8 +238,15 @@ function App() {
   return (
     <div style={{minHeight:"100vh",background:"#F7F3EE"}}>
       <header style={{background:"#3D6B4F",padding:"14px 20px",boxShadow:"0 2px 8px rgba(61,107,79,0.3)"}}>
-        <div style={{fontSize:21,fontWeight:800,color:"#fff",letterSpacing:2}}>🍱 こんだて帳</div>
-        <div style={{fontSize:11,color:"#A8D5B5",marginTop:2}}>夕食の献立を1ヶ月まるごと管理</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:21,fontWeight:800,color:"#fff",letterSpacing:2}}>🍱 こんだて帳</div>
+            <div style={{fontSize:11,color:"#A8D5B5",marginTop:2}}>夕食の献立を1ヶ月まるごと管理</div>
+          </div>
+          <div style={{fontSize:10,color:syncing?"#FFD700":"#A8D5B5",textAlign:"right"}}>
+            {syncing ? "⟳ 同期中..." : "☁️ 同期済み"}
+          </div>
+        </div>
       </header>
 
       <nav style={{background:"#fff",display:"flex",borderBottom:"2px solid #E8E2DA",position:"sticky",top:0,zIndex:10}}>
