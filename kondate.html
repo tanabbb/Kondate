@@ -49,17 +49,24 @@ const db = firebase.firestore();
 
 const WEEK_DAYS = ["日","月","火","水","木","金","土"];
 const COLOR_PALETTE = [
-  { id:"yellow",  label:"黄色",  bg:"#FFF9C4", border:"#F9E04B", shadow:"#c8a800" },
-  { id:"green",   label:"緑",    bg:"#C8F7C5", border:"#58D68D", shadow:"#1a9150" },
-  { id:"pink",    label:"ピンク",bg:"#FFD6EC", border:"#FF69B4", shadow:"#c2185b" },
-  { id:"blue",    label:"水色",  bg:"#D6EAF8", border:"#7FB3D3", shadow:"#1a6fa8" },
-  { id:"purple",  label:"紫",    bg:"#E8D5F5", border:"#C39BD3", shadow:"#7d3c98" },
-  { id:"orange",  label:"橙",    bg:"#FAE5D3", border:"#F0A86F", shadow:"#ca6f1e" },
-  { id:"red",     label:"赤",    bg:"#FADBD8", border:"#E74C3C", shadow:"#c0392b" },
-  { id:"teal",    label:"青緑",  bg:"#D1F2EB", border:"#1ABC9C", shadow:"#148f77" },
+  { id:"yellow", label:"黄色",  bg:"#FFF9C4", border:"#F9E04B", shadow:"#c8a800" },
+  { id:"green",  label:"緑",    bg:"#C8F7C5", border:"#58D68D", shadow:"#1a9150" },
+  { id:"pink",   label:"ピンク",bg:"#FFD6EC", border:"#FF69B4", shadow:"#c2185b" },
+  { id:"blue",   label:"水色",  bg:"#D6EAF8", border:"#7FB3D3", shadow:"#1a6fa8" },
+  { id:"purple", label:"紫",    bg:"#E8D5F5", border:"#C39BD3", shadow:"#7d3c98" },
+  { id:"orange", label:"橙",    bg:"#FAE5D3", border:"#F0A86F", shadow:"#ca6f1e" },
+  { id:"red",    label:"赤",    bg:"#FADBD8", border:"#E74C3C", shadow:"#c0392b" },
+  { id:"teal",   label:"青緑",  bg:"#D1F2EB", border:"#1ABC9C", shadow:"#148f77" },
 ];
 const COLOR_ORDER = COLOR_PALETTE.map(c=>c.id);
 function getColorById(id) { return COLOR_PALETTE.find(c=>c.id===id) || COLOR_PALETTE[0]; }
+
+const STOCK_CATEGORIES = [
+  { id:"meat",       label:"🥩 肉・魚",   color:"#FADBD8", border:"#E74C3C" },
+  { id:"veg",        label:"🥦 野菜",     color:"#C8F7C5", border:"#58D68D" },
+  { id:"seasoning",  label:"🧂 調味料",   color:"#FFF9C4", border:"#F9E04B" },
+  { id:"other",      label:"📦 その他",   color:"#E8E2DA", border:"#B0A090" },
+];
 
 function getCurrentYearMonth() {
   const now = new Date();
@@ -81,14 +88,17 @@ function App() {
   const [plan, setPlan] = useState({});
   const [checked, setChecked] = useState({});
   const [shopOrder, setShopOrder] = useState([]);
-  const [stock, setStock] = useState([]); // 食材在庫
+  const [shopExtra, setShopExtra] = useState([]); // 自由記述アイテム
+  const [stock, setStock] = useState([]);
+  const [stockOrder, setStockOrder] = useState({}); // カテゴリごとの並び順
   const [syncing, setSyncing] = useState(false);
-  const [recipeSort, setRecipeSort] = useState("color"); // デフォルト色順
+  const [recipeSort, setRecipeSort] = useState("color");
 
   const init = getCurrentYearMonth();
   const [viewYear, setViewYear] = useState(init.year);
   const [viewMonth, setViewMonth] = useState(init.month);
 
+  // モーダル系
   const [showRecipeModal, setShowRecipeModal] = useState(false);
   const [editingRecipe, setEditingRecipe] = useState(null);
   const [recipeName, setRecipeName] = useState("");
@@ -102,21 +112,31 @@ function App() {
   const [showDayModal, setShowDayModal] = useState(false);
   const [dayModalKey, setDayModalKey] = useState(null);
 
-  // 食材在庫モーダル
   const [showStockModal, setShowStockModal] = useState(false);
+  const [editingStock, setEditingStock] = useState(null);
   const [stockName, setStockName] = useState("");
   const [stockQty, setStockQty] = useState("");
-  const [editingStock, setEditingStock] = useState(null);
+  const [stockCategory, setStockCategory] = useState("other");
+  const [stockTab, setStockTab] = useState("meat");
+
+  // 買い物リスト自由記述
+  const [showExtraInput, setShowExtraInput] = useState(false);
+  const [extraInput, setExtraInput] = useState("");
+
   const [dragOver, setDragOver] = useState(null);
   const [dragItem, setDragItem] = useState(null);
+  const [dragStockOver, setDragStockOver] = useState(null);
+  const [dragStockItem, setDragStockItem] = useState(null);
 
   useEffect(() => {
-    const u1 = db.collection("data").doc("recipes").onSnapshot(doc => { if (doc.exists) setRecipes(doc.data().list||[]); });
-    const u2 = db.collection("data").doc("plan").onSnapshot(doc => { if (doc.exists) setPlan(doc.data().map||{}); });
-    const u3 = db.collection("data").doc("checked").onSnapshot(doc => { if (doc.exists) setChecked(doc.data().map||{}); });
-    const u4 = db.collection("data").doc("shopOrder").onSnapshot(doc => { if (doc.exists) setShopOrder(doc.data().list||[]); });
-    const u5 = db.collection("data").doc("stock").onSnapshot(doc => { if (doc.exists) setStock(doc.data().list||[]); });
-    return () => { u1(); u2(); u3(); u4(); u5(); };
+    const u1 = db.collection("data").doc("recipes").onSnapshot(doc => { if(doc.exists) setRecipes(doc.data().list||[]); });
+    const u2 = db.collection("data").doc("plan").onSnapshot(doc => { if(doc.exists) setPlan(doc.data().map||{}); });
+    const u3 = db.collection("data").doc("checked").onSnapshot(doc => { if(doc.exists) setChecked(doc.data().map||{}); });
+    const u4 = db.collection("data").doc("shopOrder").onSnapshot(doc => { if(doc.exists) setShopOrder(doc.data().list||[]); });
+    const u5 = db.collection("data").doc("stock").onSnapshot(doc => { if(doc.exists) setStock(doc.data().list||[]); });
+    const u6 = db.collection("data").doc("shopExtra").onSnapshot(doc => { if(doc.exists) setShopExtra(doc.data().list||[]); });
+    const u7 = db.collection("data").doc("stockOrder").onSnapshot(doc => { if(doc.exists) setStockOrder(doc.data().map||{}); });
+    return () => { u1();u2();u3();u4();u5();u6();u7(); };
   }, []);
 
   async function save(docName, data) {
@@ -124,158 +144,152 @@ function App() {
     await db.collection("data").doc(docName).set(data);
     setSyncing(false);
   }
-  async function saveRecipes(r) { setRecipes(r); await save("recipes", {list:r}); }
-  async function savePlan(p) { setPlan(p); await save("plan", {map:p}); }
-  async function saveChecked(c) { setChecked(c); await save("checked", {map:c}); }
-  async function saveShopOrder(o) { setShopOrder(o); await save("shopOrder", {list:o}); }
-  async function saveStock(s) { setStock(s); await save("stock", {list:s}); }
+  const saveRecipes   = async r => { setRecipes(r);    await save("recipes",   {list:r}); };
+  const savePlan      = async p => { setPlan(p);       await save("plan",      {map:p}); };
+  const saveChecked   = async c => { setChecked(c);    await save("checked",   {map:c}); };
+  const saveShopOrder = async o => { setShopOrder(o);  await save("shopOrder", {list:o}); };
+  const saveStock     = async s => { setStock(s);      await save("stock",     {list:s}); };
+  const saveShopExtra = async e => { setShopExtra(e);  await save("shopExtra", {list:e}); };
+  const saveStockOrder= async o => { setStockOrder(o); await save("stockOrder",{map:o}); };
 
-  // レシピ操作
-  function openAddRecipe() {
-    setEditingRecipe(null); setRecipeName(""); setRecipeIngredients(""); setRecipeMemo(""); setRecipeColor("yellow");
-    setShowRecipeModal(true);
-  }
-  function openEditRecipe(r) {
-    setEditingRecipe(r); setRecipeName(r.name);
-    setRecipeIngredients(r.ingredients.join("、")); setRecipeMemo(r.memo||""); setRecipeColor(r.colorId||"yellow");
-    setShowRecipeModal(true);
-  }
+  // ── レシピ ──
+  function openAddRecipe() { setEditingRecipe(null); setRecipeName(""); setRecipeIngredients(""); setRecipeMemo(""); setRecipeColor("yellow"); setShowRecipeModal(true); }
+  function openEditRecipe(r) { setEditingRecipe(r); setRecipeName(r.name); setRecipeIngredients(r.ingredients.join("、")); setRecipeMemo(r.memo||""); setRecipeColor(r.colorId||"yellow"); setShowRecipeModal(true); }
   async function saveRecipe() {
     if (!recipeName.trim()) return;
     const ingredients = recipeIngredients.split(/[、,，\n]/).map(s=>s.trim()).filter(Boolean);
-    let newRecipes;
-    if (editingRecipe) {
-      newRecipes = recipes.map(r => r.id===editingRecipe.id ? {...r, name:recipeName.trim(), ingredients, memo:recipeMemo, colorId:recipeColor} : r);
-    } else {
-      newRecipes = [...recipes, { id:Date.now(), name:recipeName.trim(), ingredients, memo:recipeMemo, colorId:recipeColor }];
-    }
-    await saveRecipes(newRecipes);
-    setShowRecipeModal(false);
+    const newR = editingRecipe
+      ? recipes.map(r=>r.id===editingRecipe.id?{...r,name:recipeName.trim(),ingredients,memo:recipeMemo,colorId:recipeColor}:r)
+      : [...recipes,{id:Date.now(),name:recipeName.trim(),ingredients,memo:recipeMemo,colorId:recipeColor}];
+    await saveRecipes(newR); setShowRecipeModal(false);
   }
   async function deleteRecipe(id) {
     if (!window.confirm("このレシピを削除しますか？")) return;
-    const newRecipes = recipes.filter(r => r.id!==id);
     const newPlan = {...plan};
-    Object.keys(newPlan).forEach(k => { newPlan[k] = (newPlan[k]||[]).filter(r => r.id!==id); });
-    await saveRecipes(newRecipes);
+    Object.keys(newPlan).forEach(k=>{newPlan[k]=(newPlan[k]||[]).filter(r=>r.id!==id);});
+    await saveRecipes(recipes.filter(r=>r.id!==id));
     await savePlan(newPlan);
   }
 
-  // 献立操作
+  // ── 献立 ──
   function openDayModal(key) { setDayModalKey(key); setShowDayModal(true); }
   function openPickerFromDay() { setSelectedKey(dayModalKey); setPickerSearch(""); setShowPicker(true); }
   async function assignRecipe(recipe) {
-    const cur = plan[selectedKey]||[];
-    await savePlan({...plan, [selectedKey]: [...cur, recipe]});
+    await savePlan({...plan,[selectedKey]:[...(plan[selectedKey]||[]),recipe]});
     setShowPicker(false);
   }
-  async function removeFromDay(key, recipeId) {
-    await savePlan({...plan, [key]: (plan[key]||[]).filter(r=>r.id!==recipeId)});
-  }
+  async function removeFromDay(key,id) { await savePlan({...plan,[key]:(plan[key]||[]).filter(r=>r.id!==id)}); }
 
-  // 月ナビ
-  function prevMonth() { if (viewMonth===1) { setViewYear(y=>y-1); setViewMonth(12); } else setViewMonth(m=>m-1); }
-  function nextMonth() { if (viewMonth===12) { setViewYear(y=>y+1); setViewMonth(1); } else setViewMonth(m=>m+1); }
+  function prevMonth() { if(viewMonth===1){setViewYear(y=>y-1);setViewMonth(12);}else setViewMonth(m=>m-1); }
+  function nextMonth() { if(viewMonth===12){setViewYear(y=>y+1);setViewMonth(1);}else setViewMonth(m=>m+1); }
   function goToday() { const t=getCurrentYearMonth(); setViewYear(t.year); setViewMonth(t.month); }
 
-  // カレンダー
   const totalDays = daysInMonth(viewYear, viewMonth);
   const startDow = firstDayOfWeek(viewYear, viewMonth);
   const weeks = [];
   let week = Array(startDow).fill(null);
-  for (let d=1; d<=totalDays; d++) {
-    week.push(d);
-    if (week.length===7) { weeks.push(week); week=[]; }
-  }
+  for (let d=1;d<=totalDays;d++) { week.push(d); if(week.length===7){weeks.push(week);week=[];} }
   if (week.length>0) { while(week.length<7) week.push(null); weeks.push(week); }
 
-  // 買い物リスト
+  // ── 買い物リスト ──
   const shoppingMap = {};
-  for (let d=1; d<=totalDays; d++) {
-    const k = dateKey(viewYear, viewMonth, d);
-    (plan[k]||[]).forEach(recipe => {
-      recipe.ingredients.forEach(ing => {
-        if (!shoppingMap[ing]) shoppingMap[ing] = [];
-        shoppingMap[ing].push(`${viewMonth}/${d}`);
-      });
-    });
+  for (let d=1;d<=totalDays;d++) {
+    const k=dateKey(viewYear,viewMonth,d);
+    (plan[k]||[]).forEach(r=>r.ingredients.forEach(ing=>{
+      if(!shoppingMap[ing]) shoppingMap[ing]=[];
+      shoppingMap[ing].push(`${viewMonth}/${d}`);
+    }));
   }
   const allIngredients = Object.keys(shoppingMap);
   const orderedIngredients = [
-    ...shopOrder.filter(ing=>allIngredients.includes(ing)),
-    ...allIngredients.filter(ing=>!shopOrder.includes(ing)),
+    ...shopOrder.filter(i=>allIngredients.includes(i)),
+    ...allIngredients.filter(i=>!shopOrder.includes(i)),
   ];
+  const stockNames = stock.map(s=>s.name);
+
+  async function toggleCheck(key) { await saveChecked({...checked,[key]:!checked[key]}); }
+  async function clearChecks() { await saveChecked({}); }
+
+  async function moveShopItem(ing,dir) {
+    const arr=[...orderedIngredients];
+    const i=arr.indexOf(ing), ni=i+dir;
+    if(ni<0||ni>=arr.length) return;
+    [arr[i],arr[ni]]=[arr[ni],arr[i]];
+    await saveShopOrder(arr);
+  }
+  function onDragStart(ing){setDragItem(ing);}
+  function onDragOver(e,ing){e.preventDefault();setDragOver(ing);}
+  async function onDrop(ing){
+    if(!dragItem||dragItem===ing){setDragItem(null);setDragOver(null);return;}
+    const arr=[...orderedIngredients];
+    const fi=arr.indexOf(dragItem),ti=arr.indexOf(ing);
+    arr.splice(fi,1);arr.splice(ti,0,dragItem);
+    await saveShopOrder(arr); setDragItem(null);setDragOver(null);
+  }
+
+  // 自由記述
+  async function addExtra() {
+    if (!extraInput.trim()) return;
+    await saveShopExtra([...shopExtra,{id:Date.now(),name:extraInput.trim()}]);
+    setExtraInput(""); setShowExtraInput(false);
+  }
+  async function removeExtra(id) { await saveShopExtra(shopExtra.filter(e=>e.id!==id)); }
+
+  // ── 食材庫 ──
+  function openAddStock() { setEditingStock(null); setStockName(""); setStockQty(""); setStockCategory(stockTab); setShowStockModal(true); }
+  function openEditStock(s) { setEditingStock(s); setStockName(s.name); setStockQty(s.qty); setStockCategory(s.category||"other"); setShowStockModal(true); }
+  async function saveStockItem() {
+    if (!stockName.trim()) return;
+    const newS = editingStock
+      ? stock.map(s=>s.id===editingStock.id?{...s,name:stockName.trim(),qty:stockQty,category:stockCategory}:s)
+      : [...stock,{id:Date.now(),name:stockName.trim(),qty:stockQty,category:stockCategory}];
+    await saveStock(newS); setShowStockModal(false);
+  }
+  async function deleteStock(id) { await saveStock(stock.filter(s=>s.id!==id)); }
+
+  // 食材庫並べ替え
+  function getStockOrdered(catId) {
+    const catItems = stock.filter(s=>(s.category||"other")===catId);
+    const order = stockOrder[catId]||[];
+    return [
+      ...order.map(id=>catItems.find(s=>s.id===id)).filter(Boolean),
+      ...catItems.filter(s=>!order.includes(s.id)),
+    ];
+  }
+  async function moveStockItem(catId,id,dir) {
+    const arr=getStockOrdered(catId).map(s=>s.id);
+    const i=arr.indexOf(id),ni=i+dir;
+    if(ni<0||ni>=arr.length) return;
+    [arr[i],arr[ni]]=[arr[ni],arr[i]];
+    await saveStockOrder({...stockOrder,[catId]:arr});
+  }
 
   // レシピ並べ替え
-  const sortedRecipes = [...recipes].sort((a,b) => {
-    if (recipeSort==="name") return a.name.localeCompare(b.name,"ja");
-    if (recipeSort==="color") return COLOR_ORDER.indexOf(a.colorId)-COLOR_ORDER.indexOf(b.colorId);
+  const sortedRecipes = [...recipes].sort((a,b)=>{
+    if(recipeSort==="name") return a.name.localeCompare(b.name,"ja");
+    if(recipeSort==="color") return COLOR_ORDER.indexOf(a.colorId)-COLOR_ORDER.indexOf(b.colorId);
     return 0;
   });
   const filteredRecipes = sortedRecipes.filter(r=>r.name.includes(pickerSearch));
 
   function dayModalLabel() {
-    if (!dayModalKey) return "";
-    const [,m,d] = dayModalKey.split("-");
-    const dow = WEEK_DAYS[new Date(viewYear, Number(m)-1, Number(d)).getDay()];
+    if(!dayModalKey) return "";
+    const[,m,d]=dayModalKey.split("-");
+    const dow=WEEK_DAYS[new Date(viewYear,Number(m)-1,Number(d)).getDay()];
     return `${Number(m)}月${Number(d)}日（${dow}）`;
   }
-
-  async function toggleCheck(ing) { await saveChecked({...checked, [ing]: !checked[ing]}); }
-  async function clearChecks() { await saveChecked({}); }
-
-  async function moveItem(ing, dir) {
-    const newOrder = [...orderedIngredients];
-    const idx = newOrder.indexOf(ing);
-    const newIdx = idx+dir;
-    if (newIdx<0||newIdx>=newOrder.length) return;
-    [newOrder[idx],newOrder[newIdx]] = [newOrder[newIdx],newOrder[idx]];
-    await saveShopOrder(newOrder);
-  }
-  function onDragStart(ing) { setDragItem(ing); }
-  function onDragOver(e,ing) { e.preventDefault(); setDragOver(ing); }
-  async function onDrop(ing) {
-    if (!dragItem||dragItem===ing) { setDragItem(null); setDragOver(null); return; }
-    const newOrder = [...orderedIngredients];
-    const fromIdx = newOrder.indexOf(dragItem);
-    const toIdx = newOrder.indexOf(ing);
-    newOrder.splice(fromIdx,1); newOrder.splice(toIdx,0,dragItem);
-    await saveShopOrder(newOrder);
-    setDragItem(null); setDragOver(null);
-  }
-
-  // 食材在庫操作
-  function openAddStock() {
-    setEditingStock(null); setStockName(""); setStockQty("");
-    setShowStockModal(true);
-  }
-  function openEditStock(s) {
-    setEditingStock(s); setStockName(s.name); setStockQty(s.qty);
-    setShowStockModal(true);
-  }
-  async function saveStockItem() {
-    if (!stockName.trim()) return;
-    let newStock;
-    if (editingStock) {
-      newStock = stock.map(s => s.id===editingStock.id ? {...s, name:stockName.trim(), qty:stockQty} : s);
-    } else {
-      newStock = [...stock, { id:Date.now(), name:stockName.trim(), qty:stockQty }];
-    }
-    await saveStock(newStock);
-    setShowStockModal(false);
-  }
-  async function deleteStock(id) {
-    await saveStock(stock.filter(s=>s.id!==id));
-  }
-
-  // 在庫にある食材かどうか判定
-  const stockNames = stock.map(s=>s.name);
 
   const tabStyle = (key) => ({
     flex:1, padding:"10px 0", fontSize:12, fontWeight:tab===key?700:400,
     background:"none", border:"none",
     borderBottom: tab===key?"3px solid #3D6B4F":"3px solid transparent",
     color: tab===key?"#3D6B4F":"#888", cursor:"pointer",
+  });
+  const stockTabStyle = (key) => ({
+    flex:1, padding:"8px 0", fontSize:11, fontWeight:stockTab===key?700:400,
+    background: stockTab===key?"#3D6B4F":"#fff",
+    color: stockTab===key?"#fff":"#888",
+    border:"none", borderRadius:0, cursor:"pointer",
   });
 
   return (
@@ -286,22 +300,20 @@ function App() {
             <div style={{fontSize:21,fontWeight:800,color:"#fff",letterSpacing:2}}>🍱 こんだて帳</div>
             <div style={{fontSize:11,color:"#A8D5B5",marginTop:2}}>夕食の献立を1ヶ月まるごと管理</div>
           </div>
-          <div style={{fontSize:10,color:syncing?"#FFD700":"#A8D5B5"}}>
-            {syncing?"⟳ 同期中...":"☁️ 同期済み"}
-          </div>
+          <div style={{fontSize:10,color:syncing?"#FFD700":"#A8D5B5"}}>{syncing?"⟳ 同期中...":"☁️ 同期済み"}</div>
         </div>
       </header>
 
       <nav style={{background:"#fff",display:"flex",borderBottom:"2px solid #E8E2DA",position:"sticky",top:0,zIndex:10}}>
-        <button onClick={()=>setTab("plan")} style={tabStyle("plan")}>📅 献立表</button>
-        <button onClick={()=>setTab("recipes")} style={tabStyle("recipes")}>📝 レシピ帳</button>
+        <button onClick={()=>setTab("plan")}     style={tabStyle("plan")}>📅 献立表</button>
+        <button onClick={()=>setTab("recipes")}  style={tabStyle("recipes")}>📝 レシピ帳</button>
         <button onClick={()=>setTab("shopping")} style={tabStyle("shopping")}>🛒 買い物</button>
-        <button onClick={()=>setTab("stock")} style={tabStyle("stock")}>🥬 食材庫</button>
+        <button onClick={()=>setTab("stock")}    style={tabStyle("stock")}>🥬 食材庫</button>
       </nav>
 
       <main style={{padding:"12px 10px",maxWidth:860,margin:"0 auto"}}>
 
-        {/* 献立表 */}
+        {/* ── 献立表 ── */}
         {tab==="plan" && (
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -314,40 +326,24 @@ function App() {
             </div>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"separate",borderSpacing:"3px 3px",minWidth:320}}>
-                <thead>
-                  <tr>
-                    {WEEK_DAYS.map(d=>(
-                      <th key={d} style={{textAlign:"center",fontSize:12,fontWeight:700,paddingBottom:6,color:d==="日"?"#c0392b":d==="土"?"#2980b9":"#3D6B4F"}}>{d}</th>
-                    ))}
-                  </tr>
-                </thead>
+                <thead><tr>{WEEK_DAYS.map(d=><th key={d} style={{textAlign:"center",fontSize:12,fontWeight:700,paddingBottom:6,color:d==="日"?"#c0392b":d==="土"?"#2980b9":"#3D6B4F"}}>{d}</th>)}</tr></thead>
                 <tbody>
                   {weeks.map((wk,wi)=>(
-                    <tr key={wi}>
-                      {wk.map((day,di)=>{
-                        if (!day) return <td key={di}></td>;
-                        const key = dateKey(viewYear,viewMonth,day);
-                        const dayRecipes = plan[key]||[];
-                        const today = isToday(viewYear,viewMonth,day);
-                        const isSun=di===0, isSat=di===6;
-                        return (
-                          <td key={di} onClick={()=>openDayModal(key)} style={{verticalAlign:"top",cursor:"pointer"}}>
-                            <div style={{minHeight:68,borderRadius:8,padding:"3px 4px",background:today?"#EAF4EE":"#fff",border:today?"2px solid #3D6B4F":"1.5px solid #E8E2DA",boxShadow:"0 1px 2px rgba(0,0,0,0.04)"}}>
-                              <div style={{fontSize:10,fontWeight:today?800:600,marginBottom:2,color:isSun?"#c0392b":isSat?"#2980b9":today?"#3D6B4F":"#555"}}>{day}</div>
-                              {dayRecipes.length===0 && <div style={{fontSize:15,color:"#DDD",textAlign:"center",paddingTop:4}}>＋</div>}
-                              {dayRecipes.map((r,i)=>{
-                                const c=getColorById(r.colorId);
-                                return (
-                                  <div key={i} style={{background:c.bg,border:`1px solid ${c.border}`,borderRadius:4,padding:"2px 4px",marginBottom:2,boxShadow:`1px 1px 0 ${c.shadow}33`}}>
-                                    <div style={{fontSize:9,fontWeight:700,lineHeight:1.3,color:"#2D2D2D"}}>{r.name}</div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
+                    <tr key={wi}>{wk.map((day,di)=>{
+                      if(!day) return <td key={di}></td>;
+                      const key=dateKey(viewYear,viewMonth,day);
+                      const dr=plan[key]||[];
+                      const today=isToday(viewYear,viewMonth,day);
+                      return (
+                        <td key={di} onClick={()=>openDayModal(key)} style={{verticalAlign:"top",cursor:"pointer"}}>
+                          <div style={{minHeight:68,borderRadius:8,padding:"3px 4px",background:today?"#EAF4EE":"#fff",border:today?"2px solid #3D6B4F":"1.5px solid #E8E2DA"}}>
+                            <div style={{fontSize:10,fontWeight:today?800:600,marginBottom:2,color:di===0?"#c0392b":di===6?"#2980b9":today?"#3D6B4F":"#555"}}>{day}</div>
+                            {dr.length===0&&<div style={{fontSize:15,color:"#DDD",textAlign:"center",paddingTop:4}}>＋</div>}
+                            {dr.map((r,i)=>{const c=getColorById(r.colorId);return(<div key={i} style={{background:c.bg,border:`1px solid ${c.border}`,borderRadius:4,padding:"2px 4px",marginBottom:2}}><div style={{fontSize:9,fontWeight:700,lineHeight:1.3}}>{r.name}</div></div>);})}
+                          </div>
+                        </td>
+                      );
+                    })}</tr>
                   ))}
                 </tbody>
               </table>
@@ -356,7 +352,7 @@ function App() {
           </div>
         )}
 
-        {/* レシピ帳 */}
+        {/* ── レシピ帳 ── */}
         {tab==="recipes" && (
           <div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -366,108 +362,67 @@ function App() {
             <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
               <span style={{fontSize:12,color:"#aaa",alignSelf:"center"}}>並べ替え：</span>
               {[["default","登録順"],["name","あいうえお順"],["color","色順"]].map(([val,label])=>(
-                <button key={val} onClick={()=>setRecipeSort(val)} style={{
-                  fontSize:11,padding:"5px 12px",borderRadius:20,cursor:"pointer",fontWeight:recipeSort===val?700:400,
-                  background:recipeSort===val?"#3D6B4F":"#fff",
-                  color:recipeSort===val?"#fff":"#888",
-                  border:recipeSort===val?"none":"1.5px solid #D5CBBF",
-                }}>{label}</button>
+                <button key={val} onClick={()=>setRecipeSort(val)} style={{fontSize:11,padding:"5px 12px",borderRadius:20,cursor:"pointer",fontWeight:recipeSort===val?700:400,background:recipeSort===val?"#3D6B4F":"#fff",color:recipeSort===val?"#fff":"#888",border:recipeSort===val?"none":"1.5px solid #D5CBBF"}}>{label}</button>
               ))}
             </div>
-            {recipes.length===0 ? (
-              <div style={{textAlign:"center",padding:60,color:"#BBB"}}>
-                <div style={{fontSize:48}}>🍽️</div>
-                <div style={{marginTop:12,fontSize:14}}>まだレシピがありません</div>
-              </div>
-            ) : (
+            {recipes.length===0?(
+              <div style={{textAlign:"center",padding:60,color:"#BBB"}}><div style={{fontSize:48}}>🍽️</div><div style={{marginTop:12,fontSize:14}}>まだレシピがありません</div></div>
+            ):(
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(160px, 1fr))",gap:12}}>
-                {sortedRecipes.map(r=>{
-                  const c=getColorById(r.colorId);
-                  return (
-                    <div key={r.id} style={{background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:14,boxShadow:`3px 4px 0 ${c.shadow}44`}}>
-                      <div style={{fontSize:14,fontWeight:800,marginBottom:6}}>{r.name}</div>
-                      {r.ingredients.length>0 && (
-                        <div style={{fontSize:11,color:"#555",marginBottom:6,lineHeight:1.7}}>
-                          {r.ingredients.map((ing,i)=>(
-                            <span key={i} style={{display:"inline-block",background:"rgba(255,255,255,0.65)",borderRadius:10,padding:"1px 6px",marginRight:3,marginBottom:3}}>{ing}</span>
-                          ))}
-                        </div>
-                      )}
-                      {r.memo && <div style={{fontSize:10,color:"#888",fontStyle:"italic",marginBottom:8}}>{r.memo}</div>}
-                      <div style={{display:"flex",gap:6,marginTop:6}}>
-                        <button onClick={()=>openEditRecipe(r)} style={{flex:1,fontSize:11,padding:"5px 0",border:`1px solid ${c.border}`,background:"rgba(255,255,255,0.7)",borderRadius:6,cursor:"pointer",fontWeight:600}}>編集</button>
-                        <button onClick={()=>deleteRecipe(r.id)} style={{flex:1,fontSize:11,padding:"5px 0",border:"1px solid #f5a5a5",background:"rgba(255,200,200,0.5)",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#c0392b"}}>削除</button>
-                      </div>
+                {sortedRecipes.map(r=>{const c=getColorById(r.colorId);return(
+                  <div key={r.id} style={{background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:14,boxShadow:`3px 4px 0 ${c.shadow}44`}}>
+                    <div style={{fontSize:14,fontWeight:800,marginBottom:6}}>{r.name}</div>
+                    {r.ingredients.length>0&&<div style={{fontSize:11,color:"#555",marginBottom:6,lineHeight:1.7}}>{r.ingredients.map((ing,i)=><span key={i} style={{display:"inline-block",background:"rgba(255,255,255,0.65)",borderRadius:10,padding:"1px 6px",marginRight:3,marginBottom:3}}>{ing}</span>)}</div>}
+                    {r.memo&&<div style={{fontSize:10,color:"#888",fontStyle:"italic",marginBottom:8}}>{r.memo}</div>}
+                    <div style={{display:"flex",gap:6,marginTop:6}}>
+                      <button onClick={()=>openEditRecipe(r)} style={{flex:1,fontSize:11,padding:"5px 0",border:`1px solid ${c.border}`,background:"rgba(255,255,255,0.7)",borderRadius:6,cursor:"pointer",fontWeight:600}}>編集</button>
+                      <button onClick={()=>deleteRecipe(r.id)} style={{flex:1,fontSize:11,padding:"5px 0",border:"1px solid #f5a5a5",background:"rgba(255,200,200,0.5)",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#c0392b"}}>削除</button>
                     </div>
-                  );
-                })}
+                  </div>
+                );})}
               </div>
             )}
           </div>
         )}
 
-        {/* 買い物リスト */}
+        {/* ── 買い物リスト ── */}
         {tab==="shopping" && (
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
               <div style={{fontSize:14,fontWeight:700,color:"#3D6B4F"}}>{viewYear}年{viewMonth}月の材料</div>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                 <button onClick={prevMonth} style={{background:"none",border:"1.5px solid #D5CBBF",borderRadius:6,padding:"4px 10px",cursor:"pointer",color:"#3D6B4F"}}>‹</button>
                 <button onClick={nextMonth} style={{background:"none",border:"1.5px solid #D5CBBF",borderRadius:6,padding:"4px 10px",cursor:"pointer",color:"#3D6B4F"}}>›</button>
-                {Object.values(checked).some(Boolean) && (
-                  <button onClick={clearChecks} style={{background:"none",border:"1.5px solid #f5a5a5",borderRadius:6,padding:"4px 10px",cursor:"pointer",color:"#c0392b",fontSize:11}}>リセット</button>
-                )}
+                {Object.values(checked).some(Boolean)&&<button onClick={clearChecks} style={{background:"none",border:"1.5px solid #f5a5a5",borderRadius:6,padding:"4px 10px",cursor:"pointer",color:"#c0392b",fontSize:11}}>チェックリセット</button>}
+                {orderedIngredients.some(ing=>checked[ing])&&<button onClick={async()=>{const remaining=orderedIngredients.filter(ing=>!checked[ing]);const newChecked={...checked};orderedIngredients.forEach(ing=>{if(checked[ing])delete newChecked[ing];});await saveShopOrder(remaining);await saveChecked(newChecked);}} style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>チェック済みを削除</button>}
               </div>
             </div>
-            {orderedIngredients.length===0 ? (
-              <div style={{textAlign:"center",padding:60,color:"#BBB"}}>
-                <div style={{fontSize:48}}>🛒</div>
-                <div style={{marginTop:12,fontSize:14}}>この月の献立を組むと材料が表示されます</div>
-              </div>
-            ) : (
+
+            {/* 献立からの自動集計 */}
+            {orderedIngredients.length>0&&(
               <>
-                <p style={{fontSize:12,color:"#999",marginBottom:8}}>{orderedIngredients.length}種類 ／ ▲▼で並べ替え</p>
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {orderedIngredients.map((ing,idx)=>{
-                    const done = !!checked[ing];
-                    const uses = shoppingMap[ing]||[];
-                    const inStock = stockNames.includes(ing);
-                    return (
-                      <div key={ing}
-                        draggable
-                        onDragStart={()=>onDragStart(ing)}
-                        onDragOver={e=>onDragOver(e,ing)}
-                        onDrop={()=>onDrop(ing)}
-                        style={{
-                          display:"flex",alignItems:"center",gap:10,
-                          background: inStock?"#EAF4EE":"#fff",
-                          border:`1.5px solid ${dragOver===ing?"#3D6B4F":inStock?"#58D68D":"#E8E2DA"}`,
-                          borderRadius:10,padding:"10px 12px",
-                          boxShadow:"0 1px 4px rgba(0,0,0,0.06)",
-                          opacity:done?0.5:1,
-                        }}>
-                        <div onClick={()=>toggleCheck(ing)} style={{
-                          width:22,height:22,borderRadius:6,flexShrink:0,cursor:"pointer",
-                          background:done?"#3D6B4F":"#fff",
-                          border:`2px solid ${done?"#3D6B4F":"#D5CBBF"}`,
-                          display:"flex",alignItems:"center",justifyContent:"center",
-                        }}>
-                          {done && <span style={{color:"#fff",fontSize:14,fontWeight:800}}>✓</span>}
+                <p style={{fontSize:12,color:"#999",marginBottom:8}}>📅 献立から自動集計（{orderedIngredients.length}種類）</p>
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+                  {orderedIngredients.map(ing=>{
+                    const done=!!checked[ing];
+                    const uses=shoppingMap[ing]||[];
+                    const inStock=stockNames.includes(ing);
+                    return(
+                      <div key={ing} draggable onDragStart={()=>onDragStart(ing)} onDragOver={e=>onDragOver(e,ing)} onDrop={()=>onDrop(ing)}
+                        style={{display:"flex",alignItems:"center",gap:10,background:inStock?"#EAF4EE":"#fff",border:`1.5px solid ${dragOver===ing?"#3D6B4F":inStock?"#58D68D":"#E8E2DA"}`,borderRadius:10,padding:"10px 12px",opacity:done?0.5:1}}>
+                        <div onClick={()=>toggleCheck(ing)} style={{width:22,height:22,borderRadius:6,flexShrink:0,cursor:"pointer",background:done?"#3D6B4F":"#fff",border:`2px solid ${done?"#3D6B4F":"#D5CBBF"}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {done&&<span style={{color:"#fff",fontSize:14,fontWeight:800}}>✓</span>}
                         </div>
                         <div style={{flex:1}} onClick={()=>toggleCheck(ing)}>
                           <div style={{display:"flex",alignItems:"center",gap:6}}>
                             <div style={{fontSize:14,fontWeight:700,textDecoration:done?"line-through":"none",color:done?"#aaa":"#2D2D2D"}}>{ing}</div>
-                            {inStock && <span style={{fontSize:10,background:"#3D6B4F",color:"#fff",borderRadius:8,padding:"1px 6px"}}>在庫あり</span>}
+                            {inStock&&<span style={{fontSize:10,background:"#3D6B4F",color:"#fff",borderRadius:8,padding:"1px 6px"}}>在庫あり</span>}
                           </div>
-                          <div style={{fontSize:10,color:"#aaa",marginTop:2}}>
-                            {uses.map((u,i)=>(
-                              <span key={i} style={{display:"inline-block",background:"#F0EBE3",borderRadius:8,padding:"1px 5px",marginRight:3}}>{u}</span>
-                            ))}
-                          </div>
+                          <div style={{fontSize:10,color:"#aaa",marginTop:2}}>{uses.map((u,i)=><span key={i} style={{display:"inline-block",background:"#F0EBE3",borderRadius:8,padding:"1px 5px",marginRight:3}}>{u}</span>)}</div>
                         </div>
-                        <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
-                          <button onClick={()=>moveItem(ing,-1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
-                          <button onClick={()=>moveItem(ing,1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
+                        <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                          <button onClick={()=>moveShopItem(ing,-1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
+                          <button onClick={()=>moveShopItem(ing,1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
                         </div>
                       </div>
                     );
@@ -475,66 +430,106 @@ function App() {
                 </div>
               </>
             )}
+
+            {/* 自由記述アイテム */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <p style={{fontSize:12,color:"#999"}}>✏️ 手動で追加した項目（{shopExtra.length}件）</p>
+              <button onClick={()=>setShowExtraInput(v=>!v)} style={{background:"#3D6B4F",color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>＋ 追加</button>
+            </div>
+            {showExtraInput&&(
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                <input value={extraInput} onChange={e=>setExtraInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addExtra()} placeholder="例：豆腐、ビール…" autoFocus
+                  style={{flex:1,padding:"9px 12px",border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:14,background:"#FDFAF7"}}/>
+                <button onClick={addExtra} style={{padding:"9px 14px",background:"#3D6B4F",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer"}}>追加</button>
+              </div>
+            )}
+            {shopExtra.length===0&&!showExtraInput&&orderedIngredients.length===0&&(
+              <div style={{textAlign:"center",padding:60,color:"#BBB"}}><div style={{fontSize:48}}>🛒</div><div style={{marginTop:12,fontSize:14}}>献立を組むか「＋ 追加」で食材を追加しよう</div></div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {shopExtra.map(e=>{
+                const done=!!checked[`extra_${e.id}`];
+                return(
+                  <div key={e.id} style={{display:"flex",alignItems:"center",gap:10,background:"#fff",border:"1.5px solid #E8E2DA",borderRadius:10,padding:"10px 12px",opacity:done?0.5:1}}>
+                    <div onClick={()=>toggleCheck(`extra_${e.id}`)} style={{width:22,height:22,borderRadius:6,flexShrink:0,cursor:"pointer",background:done?"#3D6B4F":"#fff",border:`2px solid ${done?"#3D6B4F":"#D5CBBF"}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      {done&&<span style={{color:"#fff",fontSize:14,fontWeight:800}}>✓</span>}
+                    </div>
+                    <div style={{flex:1,fontSize:14,fontWeight:700,textDecoration:done?"line-through":"none",color:done?"#aaa":"#2D2D2D"}} onClick={()=>toggleCheck(`extra_${e.id}`)}>{e.name}</div>
+                    <button onClick={()=>removeExtra(e.id)} style={{background:"none",border:"1px solid #f5a5a5",borderRadius:6,padding:"3px 8px",cursor:"pointer",color:"#c0392b",fontSize:11,fontWeight:600}}>削除</button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
-        {/* 食材庫 */}
+        {/* ── 食材庫 ── */}
         {tab==="stock" && (
           <div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div>
                 <div style={{fontSize:14,fontWeight:700,color:"#3D6B4F"}}>🥬 食材庫</div>
                 <div style={{fontSize:11,color:"#aaa",marginTop:2}}>今家にある食材を記録しよう</div>
               </div>
               <button onClick={openAddStock} style={{background:"#3D6B4F",color:"#fff",border:"none",borderRadius:20,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 追加</button>
             </div>
-            {stock.length===0 ? (
-              <div style={{textAlign:"center",padding:60,color:"#BBB"}}>
-                <div style={{fontSize:48}}>🥬</div>
-                <div style={{marginTop:12,fontSize:14}}>まだ食材が登録されていません</div>
-                <div style={{fontSize:12,marginTop:4}}>「＋ 追加」から食材を登録しよう</div>
-              </div>
-            ) : (
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {stock.map(s=>(
-                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,background:"#fff",border:"1.5px solid #E8E2DA",borderRadius:10,padding:"12px 14px",boxShadow:"0 1px 4px rgba(0,0,0,0.06)"}}>
-                    <div style={{fontSize:20}}>🥬</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:14,fontWeight:700}}>{s.name}</div>
-                      {s.qty && <div style={{fontSize:12,color:"#888",marginTop:2}}>{s.qty}</div>}
-                    </div>
-                    <div style={{display:"flex",gap:6}}>
-                      <button onClick={()=>openEditStock(s)} style={{fontSize:11,padding:"5px 10px",border:"1px solid #D5CBBF",background:"#fff",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#555"}}>編集</button>
-                      <button onClick={()=>deleteStock(s.id)} style={{fontSize:11,padding:"5px 10px",border:"1px solid #f5a5a5",background:"rgba(255,200,200,0.5)",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#c0392b"}}>削除</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* カテゴリタブ */}
+            <div style={{display:"flex",borderRadius:10,overflow:"hidden",border:"1.5px solid #D5CBBF",marginBottom:14}}>
+              {STOCK_CATEGORIES.map(cat=>(
+                <button key={cat.id} onClick={()=>setStockTab(cat.id)} style={stockTabStyle(cat.id)}>{cat.label}</button>
+              ))}
+            </div>
+            {/* 食材一覧 */}
+            {(()=>{
+              const items=getStockOrdered(stockTab);
+              if(items.length===0) return(
+                <div style={{textAlign:"center",padding:40,color:"#BBB"}}>
+                  <div style={{fontSize:36}}>{STOCK_CATEGORIES.find(c=>c.id===stockTab)?.label}</div>
+                  <div style={{marginTop:12,fontSize:13}}>まだ登録されていません</div>
+                </div>
+              );
+              return(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {items.map((s,idx)=>{
+                    const cat=STOCK_CATEGORIES.find(c=>c.id===stockTab);
+                    return(
+                      <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,background:cat.color,border:`1.5px solid ${cat.border}`,borderRadius:10,padding:"12px 14px"}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:14,fontWeight:700}}>{s.name}</div>
+                          {s.qty&&<div style={{fontSize:12,color:"#666",marginTop:2}}>{s.qty}</div>}
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",gap:2,marginRight:6}}>
+                          <button onClick={()=>moveStockItem(stockTab,s.id,-1)} style={{background:"none",border:"1px solid rgba(0,0,0,0.1)",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#888",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
+                          <button onClick={()=>moveStockItem(stockTab,s.id,1)} style={{background:"none",border:"1px solid rgba(0,0,0,0.1)",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#888",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
+                        </div>
+                        <div style={{display:"flex",gap:6}}>
+                          <button onClick={()=>openEditStock(s)} style={{fontSize:11,padding:"5px 10px",border:"1px solid rgba(0,0,0,0.15)",background:"rgba(255,255,255,0.7)",borderRadius:6,cursor:"pointer",fontWeight:600}}>編集</button>
+                          <button onClick={()=>deleteStock(s.id)} style={{fontSize:11,padding:"5px 10px",border:"1px solid #f5a5a5",background:"rgba(255,200,200,0.5)",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#c0392b"}}>削除</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
       </main>
 
       {/* 日付詳細モーダル */}
-      {showDayModal && (
+      {showDayModal&&(
         <div onClick={()=>setShowDayModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxWidth:500,maxHeight:"70vh",overflowY:"auto"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:4,color:"#3D6B4F"}}>{dayModalLabel()}の夕食</h3>
             <p style={{fontSize:12,color:"#aaa",marginBottom:14}}>×ボタンで削除</p>
-            {(plan[dayModalKey]||[]).length===0 && <div style={{textAlign:"center",padding:"20px 0",color:"#CCC",fontSize:13}}>まだ何もありません</div>}
+            {(plan[dayModalKey]||[]).length===0&&<div style={{textAlign:"center",padding:"20px 0",color:"#CCC",fontSize:13}}>まだ何もありません</div>}
             <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
-              {(plan[dayModalKey]||[]).map((r,i)=>{
-                const c=getColorById(r.colorId);
-                return (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:"10px 14px"}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:14,fontWeight:700}}>{r.name}</div>
-                      {r.ingredients.length>0 && <div style={{fontSize:11,color:"#666",marginTop:2}}>{r.ingredients.slice(0,4).join("・")}{r.ingredients.length>4?"…":""}</div>}
-                    </div>
-                    <button onClick={()=>removeFromDay(dayModalKey,r.id)} style={{background:"none",border:"none",fontSize:20,color:"#ccc",cursor:"pointer",padding:"0 4px"}}>×</button>
-                  </div>
-                );
-              })}
+              {(plan[dayModalKey]||[]).map((r,i)=>{const c=getColorById(r.colorId);return(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:"10px 14px"}}>
+                  <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{r.name}</div>{r.ingredients.length>0&&<div style={{fontSize:11,color:"#666",marginTop:2}}>{r.ingredients.slice(0,4).join("・")}{r.ingredients.length>4?"…":""}</div>}</div>
+                  <button onClick={()=>removeFromDay(dayModalKey,r.id)} style={{background:"none",border:"none",fontSize:20,color:"#ccc",cursor:"pointer",padding:"0 4px"}}>×</button>
+                </div>
+              );})}
             </div>
             <button onClick={openPickerFromDay} style={{width:"100%",padding:"12px 0",border:"none",borderRadius:10,background:"#3D6B4F",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:10}}>＋ レシピを追加</button>
             <button onClick={()=>setShowDayModal(false)} style={{width:"100%",padding:"11px 0",border:"1.5px solid #D5CBBF",borderRadius:10,background:"#fff",fontSize:14,cursor:"pointer",color:"#888"}}>閉じる</button>
@@ -542,28 +537,25 @@ function App() {
         </div>
       )}
 
-      {/* レシピ追加/編集モーダル */}
-      {showRecipeModal && (
+      {/* レシピ追加/編集 */}
+      {showRecipeModal&&(
         <div onClick={()=>setShowRecipeModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:110}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:24,width:"100%",maxWidth:500,maxHeight:"85vh",overflowY:"auto"}}>
             <h2 style={{fontSize:17,fontWeight:800,marginBottom:20,color:"#3D6B4F"}}>{editingRecipe?"レシピを編集":"レシピを追加"}</h2>
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>料理名 *</label>
-            <input value={recipeName} onChange={e=>setRecipeName(e.target.value)} placeholder="例：豚の生姜焼き"
-              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}} />
+            <input value={recipeName} onChange={e=>setRecipeName(e.target.value)} placeholder="例：豚の生姜焼き" style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}}/>
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:8}}>付箋の色</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {COLOR_PALETTE.map(c=>(
                 <button key={c.id} onClick={()=>setRecipeColor(c.id)} style={{width:36,height:36,borderRadius:8,border:recipeColor===c.id?"3px solid #3D6B4F":`2px solid ${c.border}`,background:c.bg,cursor:"pointer",boxShadow:recipeColor===c.id?"0 0 0 2px #3D6B4F":"none",position:"relative"}}>
-                  {recipeColor===c.id && <span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3D6B4F",fontWeight:800}}>✓</span>}
+                  {recipeColor===c.id&&<span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3D6B4F",fontWeight:800}}>✓</span>}
                 </button>
               ))}
             </div>
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>材料（任意・「、」か改行で区切る）</label>
-            <textarea value={recipeIngredients} onChange={e=>setRecipeIngredients(e.target.value)} placeholder="例：豚ロース、玉ねぎ、生姜、醤油、みりん" rows={3}
-              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:14,background:"#FDFAF7",resize:"vertical"}} />
+            <textarea value={recipeIngredients} onChange={e=>setRecipeIngredients(e.target.value)} placeholder="例：豚ロース、玉ねぎ、生姜" rows={3} style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:14,background:"#FDFAF7",resize:"vertical"}}/>
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>メモ（任意）</label>
-            <textarea value={recipeMemo} onChange={e=>setRecipeMemo(e.target.value)} placeholder="例：夫が好きな定番メニュー" rows={2}
-              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:20,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:14,background:"#FDFAF7",resize:"vertical"}} />
+            <textarea value={recipeMemo} onChange={e=>setRecipeMemo(e.target.value)} placeholder="例：夫が好きな定番メニュー" rows={2} style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:20,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:14,background:"#FDFAF7",resize:"vertical"}}/>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setShowRecipeModal(false)} style={{flex:1,padding:"12px 0",border:"1.5px solid #D5CBBF",borderRadius:10,background:"#fff",fontSize:14,cursor:"pointer",color:"#888"}}>キャンセル</button>
               <button onClick={saveRecipe} style={{flex:2,padding:"12px 0",border:"none",borderRadius:10,background:recipeName.trim()?"#3D6B4F":"#ccc",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>保存する</button>
@@ -572,17 +564,21 @@ function App() {
         </div>
       )}
 
-      {/* 食材追加/編集モーダル */}
-      {showStockModal && (
+      {/* 食材追加/編集 */}
+      {showStockModal&&(
         <div onClick={()=>setShowStockModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:110}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:24,width:"100%",maxWidth:500}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:24,width:"100%",maxWidth:500,maxHeight:"85vh",overflowY:"auto"}}>
             <h2 style={{fontSize:17,fontWeight:800,marginBottom:20,color:"#3D6B4F"}}>{editingStock?"食材を編集":"食材を追加"}</h2>
+            <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:8}}>カテゴリ</label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+              {STOCK_CATEGORIES.map(cat=>(
+                <button key={cat.id} onClick={()=>setStockCategory(cat.id)} style={{fontSize:12,padding:"6px 12px",borderRadius:20,cursor:"pointer",fontWeight:stockCategory===cat.id?700:400,background:stockCategory===cat.id?cat.border:"#fff",color:stockCategory===cat.id?"#fff":"#888",border:`1.5px solid ${cat.border}`}}>{cat.label}</button>
+              ))}
+            </div>
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>食材名 *</label>
-            <input value={stockName} onChange={e=>setStockName(e.target.value)} placeholder="例：玉ねぎ"
-              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}} />
+            <input value={stockName} onChange={e=>setStockName(e.target.value)} placeholder="例：玉ねぎ" style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}}/>
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>数量（任意）</label>
-            <input value={stockQty} onChange={e=>setStockQty(e.target.value)} placeholder="例：2個、半分、たっぷり"
-              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:20,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}} />
+            <input value={stockQty} onChange={e=>setStockQty(e.target.value)} placeholder="例：2個、半分、たっぷり" style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:20,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}}/>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setShowStockModal(false)} style={{flex:1,padding:"12px 0",border:"1.5px solid #D5CBBF",borderRadius:10,background:"#fff",fontSize:14,cursor:"pointer",color:"#888"}}>キャンセル</button>
               <button onClick={saveStockItem} style={{flex:2,padding:"12px 0",border:"none",borderRadius:10,background:stockName.trim()?"#3D6B4F":"#ccc",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>保存する</button>
@@ -592,37 +588,26 @@ function App() {
       )}
 
       {/* レシピピッカー */}
-      {showPicker && (
+      {showPicker&&(
         <div onClick={()=>setShowPicker(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:120}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxWidth:500,maxHeight:"75vh",overflowY:"auto"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:12,color:"#3D6B4F"}}>追加するレシピを選ぶ</h3>
-            <input value={pickerSearch} onChange={e=>setPickerSearch(e.target.value)} placeholder="レシピ名で絞り込み"
-              style={{width:"100%",padding:"9px 12px",border:"1.5px solid #D5CBBF",borderRadius:20,fontSize:13,marginBottom:10,background:"#FDFAF7"}} />
+            <input value={pickerSearch} onChange={e=>setPickerSearch(e.target.value)} placeholder="レシピ名で絞り込み" style={{width:"100%",padding:"9px 12px",border:"1.5px solid #D5CBBF",borderRadius:20,fontSize:13,marginBottom:10,background:"#FDFAF7"}}/>
             <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
               {[["default","登録順"],["name","あいうえお順"],["color","色順"]].map(([val,label])=>(
-                <button key={val} onClick={()=>setRecipeSort(val)} style={{
-                  fontSize:11,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontWeight:recipeSort===val?700:400,
-                  background:recipeSort===val?"#3D6B4F":"#fff",
-                  color:recipeSort===val?"#fff":"#888",
-                  border:recipeSort===val?"none":"1.5px solid #D5CBBF",
-                }}>{label}</button>
+                <button key={val} onClick={()=>setRecipeSort(val)} style={{fontSize:11,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontWeight:recipeSort===val?700:400,background:recipeSort===val?"#3D6B4F":"#fff",color:recipeSort===val?"#fff":"#888",border:recipeSort===val?"none":"1.5px solid #D5CBBF"}}>{label}</button>
               ))}
             </div>
-            {filteredRecipes.length===0 ? (
-              <div style={{textAlign:"center",padding:"30px 0",color:"#BBB",fontSize:13}}>
-                {recipes.length===0?"先にレシピを登録してください":"該当するレシピがありません"}
-              </div>
-            ) : (
+            {filteredRecipes.length===0?(
+              <div style={{textAlign:"center",padding:"30px 0",color:"#BBB",fontSize:13}}>{recipes.length===0?"先にレシピを登録してください":"該当するレシピがありません"}</div>
+            ):(
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {filteredRecipes.map(r=>{
-                  const c=getColorById(r.colorId);
-                  return (
-                    <button key={r.id} onClick={()=>assignRecipe(r)} style={{background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:"10px 14px",textAlign:"left",cursor:"pointer",boxShadow:`2px 2px 0 ${c.shadow}44`}}>
-                      <div style={{fontSize:14,fontWeight:700}}>{r.name}</div>
-                      {r.ingredients.length>0 && <div style={{fontSize:11,color:"#666",marginTop:3}}>{r.ingredients.slice(0,4).join("・")}{r.ingredients.length>4?"…":""}</div>}
-                    </button>
-                  );
-                })}
+                {filteredRecipes.map(r=>{const c=getColorById(r.colorId);return(
+                  <button key={r.id} onClick={()=>assignRecipe(r)} style={{background:c.bg,border:`1.5px solid ${c.border}`,borderRadius:10,padding:"10px 14px",textAlign:"left",cursor:"pointer",boxShadow:`2px 2px 0 ${c.shadow}44`}}>
+                    <div style={{fontSize:14,fontWeight:700}}>{r.name}</div>
+                    {r.ingredients.length>0&&<div style={{fontSize:11,color:"#666",marginTop:3}}>{r.ingredients.slice(0,4).join("・")}{r.ingredients.length>4?"…":""}</div>}
+                  </button>
+                );})}
               </div>
             )}
             <button onClick={()=>setShowPicker(false)} style={{width:"100%",marginTop:14,padding:"11px 0",border:"1.5px solid #D5CBBF",borderRadius:10,background:"#fff",fontSize:14,cursor:"pointer",color:"#888"}}>閉じる</button>
