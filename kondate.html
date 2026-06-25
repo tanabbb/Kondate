@@ -33,7 +33,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script type="text/babel">
 
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect } = React;
 
 const firebaseConfig = {
   apiKey: "AIzaSyAI7suoyB3jh6Vta6rqb6p8eteaw5ZY3BU",
@@ -80,10 +80,10 @@ function App() {
   const [recipes, setRecipes] = useState([]);
   const [plan, setPlan] = useState({});
   const [checked, setChecked] = useState({});
-  const [shopOrder, setShopOrder] = useState([]); // 買い物リストの並び順
+  const [shopOrder, setShopOrder] = useState([]);
+  const [stock, setStock] = useState([]); // 食材在庫
   const [syncing, setSyncing] = useState(false);
-  const [recipeSort, setRecipeSort] = useState("default"); // "default"|"name"|"color"
-  const [dragItem, setDragItem] = useState(null); // 買い物リストドラッグ
+  const [recipeSort, setRecipeSort] = useState("color"); // デフォルト色順
 
   const init = getCurrentYearMonth();
   const [viewYear, setViewYear] = useState(init.year);
@@ -102,16 +102,21 @@ function App() {
   const [showDayModal, setShowDayModal] = useState(false);
   const [dayModalKey, setDayModalKey] = useState(null);
 
+  // 食材在庫モーダル
+  const [showStockModal, setShowStockModal] = useState(false);
+  const [stockName, setStockName] = useState("");
+  const [stockQty, setStockQty] = useState("");
+  const [editingStock, setEditingStock] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const [dragItem, setDragItem] = useState(null);
+
   useEffect(() => {
-    const unsubRecipes = db.collection("data").doc("recipes")
-      .onSnapshot(doc => { if (doc.exists) setRecipes(doc.data().list || []); });
-    const unsubPlan = db.collection("data").doc("plan")
-      .onSnapshot(doc => { if (doc.exists) setPlan(doc.data().map || {}); });
-    const unsubChecked = db.collection("data").doc("checked")
-      .onSnapshot(doc => { if (doc.exists) setChecked(doc.data().map || {}); });
-    const unsubShopOrder = db.collection("data").doc("shopOrder")
-      .onSnapshot(doc => { if (doc.exists) setShopOrder(doc.data().list || []); });
-    return () => { unsubRecipes(); unsubPlan(); unsubChecked(); unsubShopOrder(); };
+    const u1 = db.collection("data").doc("recipes").onSnapshot(doc => { if (doc.exists) setRecipes(doc.data().list||[]); });
+    const u2 = db.collection("data").doc("plan").onSnapshot(doc => { if (doc.exists) setPlan(doc.data().map||{}); });
+    const u3 = db.collection("data").doc("checked").onSnapshot(doc => { if (doc.exists) setChecked(doc.data().map||{}); });
+    const u4 = db.collection("data").doc("shopOrder").onSnapshot(doc => { if (doc.exists) setShopOrder(doc.data().list||[]); });
+    const u5 = db.collection("data").doc("stock").onSnapshot(doc => { if (doc.exists) setStock(doc.data().list||[]); });
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
   async function save(docName, data) {
@@ -123,7 +128,9 @@ function App() {
   async function savePlan(p) { setPlan(p); await save("plan", {map:p}); }
   async function saveChecked(c) { setChecked(c); await save("checked", {map:c}); }
   async function saveShopOrder(o) { setShopOrder(o); await save("shopOrder", {list:o}); }
+  async function saveStock(s) { setStock(s); await save("stock", {list:s}); }
 
+  // レシピ操作
   function openAddRecipe() {
     setEditingRecipe(null); setRecipeName(""); setRecipeIngredients(""); setRecipeMemo(""); setRecipeColor("yellow");
     setShowRecipeModal(true);
@@ -154,25 +161,24 @@ function App() {
     await savePlan(newPlan);
   }
 
+  // 献立操作
   function openDayModal(key) { setDayModalKey(key); setShowDayModal(true); }
   function openPickerFromDay() { setSelectedKey(dayModalKey); setPickerSearch(""); setShowPicker(true); }
   async function assignRecipe(recipe) {
-    const cur = plan[selectedKey] || [];
+    const cur = plan[selectedKey]||[];
     await savePlan({...plan, [selectedKey]: [...cur, recipe]});
     setShowPicker(false);
   }
   async function removeFromDay(key, recipeId) {
-    await savePlan({...plan, [key]: (plan[key]||[]).filter(r => r.id!==recipeId)});
+    await savePlan({...plan, [key]: (plan[key]||[]).filter(r=>r.id!==recipeId)});
   }
 
-  function prevMonth() {
-    if (viewMonth===1) { setViewYear(y=>y-1); setViewMonth(12); } else setViewMonth(m=>m-1);
-  }
-  function nextMonth() {
-    if (viewMonth===12) { setViewYear(y=>y+1); setViewMonth(1); } else setViewMonth(m=>m+1);
-  }
+  // 月ナビ
+  function prevMonth() { if (viewMonth===1) { setViewYear(y=>y-1); setViewMonth(12); } else setViewMonth(m=>m-1); }
+  function nextMonth() { if (viewMonth===12) { setViewYear(y=>y+1); setViewMonth(1); } else setViewMonth(m=>m+1); }
   function goToday() { const t=getCurrentYearMonth(); setViewYear(t.year); setViewMonth(t.month); }
 
+  // カレンダー
   const totalDays = daysInMonth(viewYear, viewMonth);
   const startDow = firstDayOfWeek(viewYear, viewMonth);
   const weeks = [];
@@ -183,7 +189,7 @@ function App() {
   }
   if (week.length>0) { while(week.length<7) week.push(null); weeks.push(week); }
 
-  // 買い物リスト集計
+  // 買い物リスト
   const shoppingMap = {};
   for (let d=1; d<=totalDays; d++) {
     const k = dateKey(viewYear, viewMonth, d);
@@ -195,20 +201,18 @@ function App() {
     });
   }
   const allIngredients = Object.keys(shoppingMap);
-
-  // shopOrderに基づいて並べる（新しい食材は末尾に追加）
   const orderedIngredients = [
-    ...shopOrder.filter(ing => allIngredients.includes(ing)),
-    ...allIngredients.filter(ing => !shopOrder.includes(ing)),
+    ...shopOrder.filter(ing=>allIngredients.includes(ing)),
+    ...allIngredients.filter(ing=>!shopOrder.includes(ing)),
   ];
 
   // レシピ並べ替え
   const sortedRecipes = [...recipes].sort((a,b) => {
-    if (recipeSort==="name") return a.name.localeCompare(b.name, "ja");
-    if (recipeSort==="color") return COLOR_ORDER.indexOf(a.colorId) - COLOR_ORDER.indexOf(b.colorId);
+    if (recipeSort==="name") return a.name.localeCompare(b.name,"ja");
+    if (recipeSort==="color") return COLOR_ORDER.indexOf(a.colorId)-COLOR_ORDER.indexOf(b.colorId);
     return 0;
   });
-  const filteredRecipes = sortedRecipes.filter(r => r.name.includes(pickerSearch));
+  const filteredRecipes = sortedRecipes.filter(r=>r.name.includes(pickerSearch));
 
   function dayModalLabel() {
     if (!dayModalKey) return "";
@@ -220,36 +224,55 @@ function App() {
   async function toggleCheck(ing) { await saveChecked({...checked, [ing]: !checked[ing]}); }
   async function clearChecks() { await saveChecked({}); }
 
-  // ドラッグ＆ドロップで並べ替え（タッチ対応）
-  const [dragOver, setDragOver] = useState(null);
-  const [touchStartY, setTouchStartY] = useState(null);
-  const [touchDragIdx, setTouchDragIdx] = useState(null);
-
+  async function moveItem(ing, dir) {
+    const newOrder = [...orderedIngredients];
+    const idx = newOrder.indexOf(ing);
+    const newIdx = idx+dir;
+    if (newIdx<0||newIdx>=newOrder.length) return;
+    [newOrder[idx],newOrder[newIdx]] = [newOrder[newIdx],newOrder[idx]];
+    await saveShopOrder(newOrder);
+  }
   function onDragStart(ing) { setDragItem(ing); }
-  function onDragOver(e, ing) { e.preventDefault(); setDragOver(ing); }
+  function onDragOver(e,ing) { e.preventDefault(); setDragOver(ing); }
   async function onDrop(ing) {
-    if (!dragItem || dragItem===ing) { setDragItem(null); setDragOver(null); return; }
+    if (!dragItem||dragItem===ing) { setDragItem(null); setDragOver(null); return; }
     const newOrder = [...orderedIngredients];
     const fromIdx = newOrder.indexOf(dragItem);
     const toIdx = newOrder.indexOf(ing);
-    newOrder.splice(fromIdx, 1);
-    newOrder.splice(toIdx, 0, dragItem);
+    newOrder.splice(fromIdx,1); newOrder.splice(toIdx,0,dragItem);
     await saveShopOrder(newOrder);
     setDragItem(null); setDragOver(null);
   }
 
-  // タッチで上下移動
-  async function moveItem(ing, dir) {
-    const newOrder = [...orderedIngredients];
-    const idx = newOrder.indexOf(ing);
-    const newIdx = idx + dir;
-    if (newIdx < 0 || newIdx >= newOrder.length) return;
-    [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
-    await saveShopOrder(newOrder);
+  // 食材在庫操作
+  function openAddStock() {
+    setEditingStock(null); setStockName(""); setStockQty("");
+    setShowStockModal(true);
+  }
+  function openEditStock(s) {
+    setEditingStock(s); setStockName(s.name); setStockQty(s.qty);
+    setShowStockModal(true);
+  }
+  async function saveStockItem() {
+    if (!stockName.trim()) return;
+    let newStock;
+    if (editingStock) {
+      newStock = stock.map(s => s.id===editingStock.id ? {...s, name:stockName.trim(), qty:stockQty} : s);
+    } else {
+      newStock = [...stock, { id:Date.now(), name:stockName.trim(), qty:stockQty }];
+    }
+    await saveStock(newStock);
+    setShowStockModal(false);
+  }
+  async function deleteStock(id) {
+    await saveStock(stock.filter(s=>s.id!==id));
   }
 
+  // 在庫にある食材かどうか判定
+  const stockNames = stock.map(s=>s.name);
+
   const tabStyle = (key) => ({
-    flex:1, padding:"12px 0", fontSize:13, fontWeight:tab===key?700:400,
+    flex:1, padding:"10px 0", fontSize:12, fontWeight:tab===key?700:400,
     background:"none", border:"none",
     borderBottom: tab===key?"3px solid #3D6B4F":"3px solid transparent",
     color: tab===key?"#3D6B4F":"#888", cursor:"pointer",
@@ -264,7 +287,7 @@ function App() {
             <div style={{fontSize:11,color:"#A8D5B5",marginTop:2}}>夕食の献立を1ヶ月まるごと管理</div>
           </div>
           <div style={{fontSize:10,color:syncing?"#FFD700":"#A8D5B5"}}>
-            {syncing ? "⟳ 同期中..." : "☁️ 同期済み"}
+            {syncing?"⟳ 同期中...":"☁️ 同期済み"}
           </div>
         </div>
       </header>
@@ -272,11 +295,13 @@ function App() {
       <nav style={{background:"#fff",display:"flex",borderBottom:"2px solid #E8E2DA",position:"sticky",top:0,zIndex:10}}>
         <button onClick={()=>setTab("plan")} style={tabStyle("plan")}>📅 献立表</button>
         <button onClick={()=>setTab("recipes")} style={tabStyle("recipes")}>📝 レシピ帳</button>
-        <button onClick={()=>setTab("shopping")} style={tabStyle("shopping")}>🛒 買い物リスト</button>
+        <button onClick={()=>setTab("shopping")} style={tabStyle("shopping")}>🛒 買い物</button>
+        <button onClick={()=>setTab("stock")} style={tabStyle("stock")}>🥬 食材庫</button>
       </nav>
 
       <main style={{padding:"12px 10px",maxWidth:860,margin:"0 auto"}}>
 
+        {/* 献立表 */}
         {tab==="plan" && (
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -331,14 +356,14 @@ function App() {
           </div>
         )}
 
+        {/* レシピ帳 */}
         {tab==="recipes" && (
           <div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <p style={{fontSize:12,color:"#999"}}>{recipes.length}件</p>
               <button onClick={openAddRecipe} style={{background:"#3D6B4F",color:"#fff",border:"none",borderRadius:20,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ レシピを追加</button>
             </div>
-            {/* 並べ替えボタン */}
-            <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
               <span style={{fontSize:12,color:"#aaa",alignSelf:"center"}}>並べ替え：</span>
               {[["default","登録順"],["name","あいうえお順"],["color","色順"]].map(([val,label])=>(
                 <button key={val} onClick={()=>setRecipeSort(val)} style={{
@@ -381,6 +406,7 @@ function App() {
           </div>
         )}
 
+        {/* 買い物リスト */}
         {tab==="shopping" && (
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
@@ -400,11 +426,12 @@ function App() {
               </div>
             ) : (
               <>
-                <p style={{fontSize:12,color:"#999",marginBottom:8}}>{orderedIngredients.length}種類 ／ ☰ を長押しでドラッグ、↑↓で並べ替え</p>
+                <p style={{fontSize:12,color:"#999",marginBottom:8}}>{orderedIngredients.length}種類 ／ ▲▼で並べ替え</p>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {orderedIngredients.map((ing,idx)=>{
                     const done = !!checked[ing];
-                    const uses = shoppingMap[ing] || [];
+                    const uses = shoppingMap[ing]||[];
+                    const inStock = stockNames.includes(ing);
                     return (
                       <div key={ing}
                         draggable
@@ -413,13 +440,12 @@ function App() {
                         onDrop={()=>onDrop(ing)}
                         style={{
                           display:"flex",alignItems:"center",gap:10,
-                          background:"#fff",border:`1.5px solid ${dragOver===ing?"#3D6B4F":"#E8E2DA"}`,
+                          background: inStock?"#EAF4EE":"#fff",
+                          border:`1.5px solid ${dragOver===ing?"#3D6B4F":inStock?"#58D68D":"#E8E2DA"}`,
                           borderRadius:10,padding:"10px 12px",
                           boxShadow:"0 1px 4px rgba(0,0,0,0.06)",
                           opacity:done?0.5:1,
-                          transition:"border-color 0.1s",
                         }}>
-                        {/* チェックボックス */}
                         <div onClick={()=>toggleCheck(ing)} style={{
                           width:22,height:22,borderRadius:6,flexShrink:0,cursor:"pointer",
                           background:done?"#3D6B4F":"#fff",
@@ -428,16 +454,17 @@ function App() {
                         }}>
                           {done && <span style={{color:"#fff",fontSize:14,fontWeight:800}}>✓</span>}
                         </div>
-                        {/* 内容 */}
                         <div style={{flex:1}} onClick={()=>toggleCheck(ing)}>
-                          <div style={{fontSize:14,fontWeight:700,textDecoration:done?"line-through":"none",color:done?"#aaa":"#2D2D2D"}}>{ing}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{fontSize:14,fontWeight:700,textDecoration:done?"line-through":"none",color:done?"#aaa":"#2D2D2D"}}>{ing}</div>
+                            {inStock && <span style={{fontSize:10,background:"#3D6B4F",color:"#fff",borderRadius:8,padding:"1px 6px"}}>在庫あり</span>}
+                          </div>
                           <div style={{fontSize:10,color:"#aaa",marginTop:2}}>
                             {uses.map((u,i)=>(
                               <span key={i} style={{display:"inline-block",background:"#F0EBE3",borderRadius:8,padding:"1px 5px",marginRight:3}}>{u}</span>
                             ))}
                           </div>
                         </div>
-                        {/* 並べ替えボタン */}
                         <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
                           <button onClick={()=>moveItem(ing,-1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
                           <button onClick={()=>moveItem(ing,1)} style={{background:"none",border:"1px solid #E8E2DA",borderRadius:4,width:24,height:22,cursor:"pointer",color:"#aaa",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
@@ -450,8 +477,45 @@ function App() {
             )}
           </div>
         )}
+
+        {/* 食材庫 */}
+        {tab==="stock" && (
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:"#3D6B4F"}}>🥬 食材庫</div>
+                <div style={{fontSize:11,color:"#aaa",marginTop:2}}>今家にある食材を記録しよう</div>
+              </div>
+              <button onClick={openAddStock} style={{background:"#3D6B4F",color:"#fff",border:"none",borderRadius:20,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 追加</button>
+            </div>
+            {stock.length===0 ? (
+              <div style={{textAlign:"center",padding:60,color:"#BBB"}}>
+                <div style={{fontSize:48}}>🥬</div>
+                <div style={{marginTop:12,fontSize:14}}>まだ食材が登録されていません</div>
+                <div style={{fontSize:12,marginTop:4}}>「＋ 追加」から食材を登録しよう</div>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {stock.map(s=>(
+                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,background:"#fff",border:"1.5px solid #E8E2DA",borderRadius:10,padding:"12px 14px",boxShadow:"0 1px 4px rgba(0,0,0,0.06)"}}>
+                    <div style={{fontSize:20}}>🥬</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:14,fontWeight:700}}>{s.name}</div>
+                      {s.qty && <div style={{fontSize:12,color:"#888",marginTop:2}}>{s.qty}</div>}
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={()=>openEditStock(s)} style={{fontSize:11,padding:"5px 10px",border:"1px solid #D5CBBF",background:"#fff",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#555"}}>編集</button>
+                      <button onClick={()=>deleteStock(s.id)} style={{fontSize:11,padding:"5px 10px",border:"1px solid #f5a5a5",background:"rgba(255,200,200,0.5)",borderRadius:6,cursor:"pointer",fontWeight:600,color:"#c0392b"}}>削除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
+      {/* 日付詳細モーダル */}
       {showDayModal && (
         <div onClick={()=>setShowDayModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxWidth:500,maxHeight:"70vh",overflowY:"auto"}}>
@@ -478,6 +542,7 @@ function App() {
         </div>
       )}
 
+      {/* レシピ追加/編集モーダル */}
       {showRecipeModal && (
         <div onClick={()=>setShowRecipeModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:110}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:24,width:"100%",maxWidth:500,maxHeight:"85vh",overflowY:"auto"}}>
@@ -488,13 +553,7 @@ function App() {
             <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:8}}>付箋の色</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {COLOR_PALETTE.map(c=>(
-                <button key={c.id} onClick={()=>setRecipeColor(c.id)} style={{
-                  width:36,height:36,borderRadius:8,
-                  border:recipeColor===c.id?"3px solid #3D6B4F":`2px solid ${c.border}`,
-                  background:c.bg,cursor:"pointer",
-                  boxShadow:recipeColor===c.id?"0 0 0 2px #3D6B4F":"none",
-                  position:"relative",
-                }}>
+                <button key={c.id} onClick={()=>setRecipeColor(c.id)} style={{width:36,height:36,borderRadius:8,border:recipeColor===c.id?"3px solid #3D6B4F":`2px solid ${c.border}`,background:c.bg,cursor:"pointer",boxShadow:recipeColor===c.id?"0 0 0 2px #3D6B4F":"none",position:"relative"}}>
                   {recipeColor===c.id && <span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3D6B4F",fontWeight:800}}>✓</span>}
                 </button>
               ))}
@@ -513,6 +572,26 @@ function App() {
         </div>
       )}
 
+      {/* 食材追加/編集モーダル */}
+      {showStockModal && (
+        <div onClick={()=>setShowStockModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:110}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:24,width:"100%",maxWidth:500}}>
+            <h2 style={{fontSize:17,fontWeight:800,marginBottom:20,color:"#3D6B4F"}}>{editingStock?"食材を編集":"食材を追加"}</h2>
+            <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>食材名 *</label>
+            <input value={stockName} onChange={e=>setStockName(e.target.value)} placeholder="例：玉ねぎ"
+              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:14,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}} />
+            <label style={{fontSize:12,color:"#888",fontWeight:600,display:"block",marginBottom:4}}>数量（任意）</label>
+            <input value={stockQty} onChange={e=>setStockQty(e.target.value)} placeholder="例：2個、半分、たっぷり"
+              style={{display:"block",width:"100%",padding:"10px 12px",marginBottom:20,border:"1.5px solid #D5CBBF",borderRadius:8,fontSize:15,background:"#FDFAF7"}} />
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setShowStockModal(false)} style={{flex:1,padding:"12px 0",border:"1.5px solid #D5CBBF",borderRadius:10,background:"#fff",fontSize:14,cursor:"pointer",color:"#888"}}>キャンセル</button>
+              <button onClick={saveStockItem} style={{flex:2,padding:"12px 0",border:"none",borderRadius:10,background:stockName.trim()?"#3D6B4F":"#ccc",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>保存する</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* レシピピッカー */}
       {showPicker && (
         <div onClick={()=>setShowPicker(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:120}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxWidth:500,maxHeight:"75vh",overflowY:"auto"}}>
